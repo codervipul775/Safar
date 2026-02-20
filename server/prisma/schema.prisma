@@ -13,3 +13,78 @@ datasource db {
   provider = "mongodb"
   url      = env("DATABASE_URL")
 }
+
+model User {
+  id           String      @id @default(auto()) @map("_id") @db.ObjectId
+  name         String
+  email        String      @unique
+  passwordHash String
+  workspaces   Workspace[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Workspace {
+  id          String  @id @default(auto()) @map("_id") @db.ObjectId
+  name        String
+  description String?
+
+  ownerId String @db.ObjectId
+  owner   User   @relation(fields: [ownerId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  files     File[]
+
+  @@index([ownerId])
+}
+
+model File {
+  id       String  @id @default(auto()) @map("_id") @db.ObjectId
+  name     String
+  type     String
+  content  String? @default("")
+  language String?
+  parentId String? @db.ObjectId
+
+  workspaceId String    @db.ObjectId
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  syncStatus String    @default("LOCAL_ONLY")
+  syncedAt   DateTime?
+
+  versions FileVersion[]
+  syncLogs SyncLog[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([workspaceId])
+  @@index([parentId])
+}
+
+model FileVersion {
+  id     String @id @default(auto()) @map("_id") @db.ObjectId
+  fileId String @db.ObjectId
+  file   File   @relation(fields: [fileId], references: [id], onDelete: Cascade)
+
+  content       String
+  versionNumber Int
+  createdAt     DateTime @default(now())
+
+  @@index([fileId])
+}
+
+model SyncLog {
+  id     String @id @default(auto()) @map("_id") @db.ObjectId
+  fileId String @db.ObjectId
+  file   File   @relation(fields: [fileId], references: [id], onDelete: Cascade)
+
+  action    String
+  status    String
+  details   String?
+  timestamp DateTime @default(now())
+
+  @@index([fileId])
+}
