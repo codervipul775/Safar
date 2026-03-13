@@ -38,7 +38,7 @@ export class FileController {
     try {
       const { name, content, syncStatus } = req.body
 
-      const file = await this.fileService.update(req.params.id, {
+      const file = await this.fileService.update(req.params.id as string, {
         name,
         content,
         syncStatus
@@ -56,7 +56,7 @@ export class FileController {
 
   delete = async (req: AuthRequest, res: Response): Promise<void> => {
     try {
-      await this.fileService.delete(req.params.id)
+      await this.fileService.delete(req.params.id as string)
 
       res.status(200).json({
         message: "File deleted"
@@ -69,7 +69,7 @@ export class FileController {
 
   getById = async (req: AuthRequest, res: Response): Promise<void> => {
     try {
-      const file = await this.fileService.findById(req.params.id)
+      const file = await this.fileService.findById(req.params.id as string)
 
       res.status(200).json({
         file: file.toJSON()
@@ -82,7 +82,7 @@ export class FileController {
 
   getTree = async (req: AuthRequest, res: Response): Promise<void> => {
     try {
-      const tree = await this.fileService.getTree(req.params.workspaceId)
+      const tree = await this.fileService.getTree(req.params.workspaceId as string)
 
       res.status(200).json({
         files: tree.map(f => f.toJSON())
@@ -94,7 +94,7 @@ export class FileController {
 
   getVersions = async (req: AuthRequest, res: Response): Promise<void> => {
     try {
-      const versions = await this.fileService.getVersions(req.params.id)
+      const versions = await this.fileService.getVersions(req.params.id as string )
 
       res.status(200).json({
         versions: versions.map(v => v.toJSON())
@@ -111,7 +111,7 @@ export class FileController {
       if (!versionId)
         return void res.status(400).json({ error: "versionId is required" })
 
-      const file = await this.fileService.restoreVersion(req.params.id, versionId)
+      const file = await this.fileService.restoreVersion(req.params.id as string , versionId)
 
       res.status(200).json({
         message: "Version restored",

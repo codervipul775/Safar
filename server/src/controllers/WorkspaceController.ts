@@ -45,7 +45,7 @@ export class WorkspaceController {
 
   getById = async (req: AuthRequest, res: Response): Promise<void> => {
     try {
-      const workspace = await this.workspaceService.findById(req.params.id)
+      const workspace = await this.workspaceService.findById(req.params.id as string)
 
       res.status(200).json({
         workspace: workspace.toJSON()
@@ -59,7 +59,7 @@ export class WorkspaceController {
   update = async (req: AuthRequest, res: Response): Promise<void> => {
     try {
       const { name } = req.body
-      const workspace = await this.workspaceService.update(req.params.id, name)
+      const workspace = await this.workspaceService.update(req.params.id as string, name)
 
       res.status(200).json({
         message: "Workspace updated",
@@ -75,7 +75,7 @@ export class WorkspaceController {
     try {
       const userId = this.getUserId(req)
 
-      await this.workspaceService.delete(req.params.id, userId)
+      await this.workspaceService.delete(req.params.id as string, userId)
 
       res.status(200).json({
         message: "Workspace deleted"
@@ -85,4 +85,4 @@ export class WorkspaceController {
       res.status(400).json({ error: msg })
     }
   }
-}
+} 
