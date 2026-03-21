@@ -13,7 +13,8 @@ import {
   Plus,
   Layers
 } from "lucide-react"
-import { FileTreeNode, FileType, SyncStatus, Workspace } from "../types"
+import { FileType, SyncStatus } from "../types"
+import type { FileTreeNode, Workspace } from "../types"
 
 interface SidebarProps {
   workspaces: Workspace[]
@@ -31,12 +32,26 @@ interface SidebarProps {
 }
 
 const getIcon = (type: FileType, expanded?: boolean) => {
-  if (type === FileType.FOLDER) return expanded ? FolderOpen : Folder
-  if (type === FileType.MARKDOWN) return FileText
-  if (type === FileType.CODE) return FileCode
-  if (type === FileType.TODO) return CheckSquare
-  return File
-}
+  if (type === FileType.FOLDER) {
+    return expanded
+      ? <FolderOpen size={16} className="tree-item-icon" />
+      : <Folder size={16} className="tree-item-icon" />;
+  }
+
+  if (type === FileType.MARKDOWN) {
+    return <FileText size={16} className="tree-item-icon" />;
+  }
+
+  if (type === FileType.CODE) {
+    return <FileCode size={16} className="tree-item-icon" />;
+  }
+
+  if (type === FileType.TODO) {
+    return <CheckSquare size={16} className="tree-item-icon" />;
+  }
+
+  return <File size={16} className="tree-item-icon" />;
+};
 
 const getSyncColor = (status: SyncStatus) => {
   if (status === SyncStatus.PENDING) return "var(--sync-pending)"
@@ -60,7 +75,7 @@ function TreeItem({
 }) {
   const isFolder = node.type === FileType.FOLDER
   const isActive = node.id === activeFileId
-  const Icon = getIcon(node.type, node.isExpanded)
+  const icon = getIcon(node.type, node.isExpanded)
 
   return (
     <div>
@@ -73,7 +88,7 @@ function TreeItem({
           {isFolder && (node.isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />)}
         </span>
 
-        <Icon size={16} className="tree-item-icon" />
+        {icon}
 
         <span className="tree-item-name">{node.name}</span>
 
