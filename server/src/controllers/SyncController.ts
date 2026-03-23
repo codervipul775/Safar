@@ -5,6 +5,27 @@ import { AuthRequest } from "../middleware/authMiddleware"
 export class SyncController {
   constructor(private syncService: SyncService) {}
 
+  pushWorkspaces = async (req: AuthRequest, res: Response): Promise<void> => {
+    try {
+      if (!req.user)
+        return void res.status(401).json({ error: "Not authenticated" })
+
+      const { workspaces } = req.body
+      if (!Array.isArray(workspaces))
+        return void res.status(400).json({ error: "workspaces array is required" })
+
+      const count = await this.syncService.pushWorkspaces(req.user.id, workspaces)
+
+      res.status(200).json({
+        message: "Workspaces synced",
+        count
+      })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Workspaces sync failed"
+      res.status(500).json({ error: msg })
+    }
+  }
+
   pushChanges = async (req: AuthRequest, res: Response): Promise<void> => {
     try {
       if (!req.user)

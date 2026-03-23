@@ -26,7 +26,7 @@ model User {
 }
 
 model Workspace {
-  id          String  @id @default(auto()) @map("_id") @db.ObjectId
+  id          String  @id @map("_id")
   name        String
   description String?
 
@@ -41,14 +41,14 @@ model Workspace {
 }
 
 model File {
-  id       String  @id @default(auto()) @map("_id") @db.ObjectId
+  id       String  @id @map("_id")
   name     String
   type     String
   content  String? @default("")
   language String?
-  parentId String? @db.ObjectId
+  parentId String?
 
-  workspaceId String    @db.ObjectId
+  workspaceId String
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   syncStatus String    @default("LOCAL_ONLY")
@@ -65,8 +65,8 @@ model File {
 }
 
 model FileVersion {
-  id     String @id @default(auto()) @map("_id") @db.ObjectId
-  fileId String @db.ObjectId
+  id     String @id @map("_id")
+  fileId String
   file   File   @relation(fields: [fileId], references: [id], onDelete: Cascade)
 
   content       String
@@ -77,8 +77,8 @@ model FileVersion {
 }
 
 model SyncLog {
-  id     String @id @default(auto()) @map("_id") @db.ObjectId
-  fileId String @db.ObjectId
+  id     String @id @map("_id")
+  fileId String
   file   File   @relation(fields: [fileId], references: [id], onDelete: Cascade)
 
   action    String
@@ -88,3 +88,4 @@ model SyncLog {
 
   @@index([fileId])
 }
+

@@ -176,6 +176,7 @@ export class FileService implements IFileService {
 
     await this.prisma.fileVersion.create({
       data: {
+        id: `v_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
         fileId,
         content,
         versionNumber: (latest?.versionNumber || 0) + 1,

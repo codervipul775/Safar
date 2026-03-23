@@ -13,6 +13,7 @@ export const createSyncRoutes = (
   router.use(authMiddleware(authService))
 
   router.post("/push", controller.pushChanges)
+  router.post("/workspaces", controller.pushWorkspaces)
   router.get("/pull", controller.pullChanges)
   router.post("/resolve", controller.resolveConflict)
   router.get("/status", controller.getStatus)

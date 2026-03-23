@@ -3,7 +3,19 @@ import { FileNode, SyncStatus, SyncLog, SyncAction, SyncLogStatus } from "../mod
 
 export interface SyncPushDTO {
   fileId: string
+  name: string
+  type: string
   content: string
+  parentId: string | null
+  workspaceId: string
+  updatedAt: string
+}
+
+export interface SyncWorkspaceDTO {
+  id: string
+  name: string
+  ownerId: string
+  createdAt: string
   updatedAt: string
 }
 
@@ -20,6 +32,7 @@ export interface SyncStatusInfo {
 }
 
 export interface ISyncService {
+  pushWorkspaces(userId: string, workspaces: SyncWorkspaceDTO[]): Promise<number>
   pushChanges(userId: string, changes: SyncPushDTO[]): Promise<SyncResult>
   pullChanges(workspaceId: string, since: Date): Promise<FileNode[]>
   resolveConflict(fileId: string, resolution: "local" | "cloud", localContent?: string): Promise<FileNode>
@@ -29,41 +42,92 @@ export interface ISyncService {
 export class SyncService implements ISyncService {
   constructor(private prisma: PrismaClient) {}
 
+  async pushWorkspaces(userId: string, workspaces: SyncWorkspaceDTO[]): Promise<number> {
+    let synced = 0
+    for (const ws of workspaces) {
+      await this.prisma.workspace.upsert({
+        where: { id: ws.id },
+        update: {
+          name: ws.name,
+          updatedAt: new Date(ws.updatedAt)
+        },
+        create: {
+          id: ws.id,
+          name: ws.name,
+          ownerId: userId,
+          createdAt: new Date(ws.createdAt),
+          updatedAt: new Date(ws.updatedAt)
+        }
+      })
+      synced++
+    }
+    return synced
+  }
+
   async pushChanges(userId: string, changes: SyncPushDTO[]): Promise<SyncResult> {
     let pushed = 0
     let conflicts = 0
 
     for (const change of changes) {
       try {
-        const file = await this.prisma.file.findUnique({
+        const existing = await this.prisma.file.findUnique({
           where: { id: change.fileId }
         })
 
-        if (!file) {
-          await this.createLog(change.fileId, SyncAction.UPDATE, SyncLogStatus.FAILED, "File not found")
-          continue
+        if (existing) {
+          const clientTime = new Date(change.updatedAt)
+          const conflict = existing.updatedAt > clientTime && existing.content !== change.content
+
+          if (conflict) {
+            await this.prisma.file.update({
+              where: { id: change.fileId },
+              data: { syncStatus: SyncStatus.CONFLICT }
+            })
+
+            await this.createLog(change.fileId, SyncAction.UPDATE, SyncLogStatus.FAILED, "Conflict detected")
+            conflicts++
+            continue
+          }
+
+          // Versioning: If content changed, create a snapshot of the current cloud state before updating
+          if (existing.content !== change.content) {
+            const latestVersion = await this.prisma.fileVersion.findFirst({
+              where: { fileId: change.fileId },
+              orderBy: { versionNumber: "desc" }
+            });
+            
+            await this.prisma.fileVersion.create({
+              data: {
+                 id: `v_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+                 fileId: change.fileId,
+                 content: existing.content || "",
+                 versionNumber: (latestVersion?.versionNumber || 0) + 1,
+                 createdAt: existing.updatedAt
+              }
+            });
+          }
         }
 
-        const clientTime = new Date(change.updatedAt)
-        const conflict = file.updatedAt > clientTime && file.content !== change.content
-
-        if (conflict) {
-          await this.prisma.file.update({
-            where: { id: change.fileId },
-            data: { syncStatus: SyncStatus.CONFLICT }
-          })
-
-          await this.createLog(change.fileId, SyncAction.UPDATE, SyncLogStatus.FAILED, "Conflict detected")
-          conflicts++
-          continue
-        }
-
-        await this.prisma.file.update({
+        await this.prisma.file.upsert({
           where: { id: change.fileId },
-          data: {
+          update: {
+            name: change.name,
             content: change.content,
             syncStatus: SyncStatus.SYNCED,
-            syncedAt: new Date()
+            syncedAt: new Date(),
+            updatedAt: new Date(change.updatedAt)
+          },
+          create: {
+            id: change.fileId,
+            name: change.name,
+            type: change.type,
+            content: change.content,
+            parentId: change.parentId,
+            workspaceId: change.workspaceId,
+            syncStatus: SyncStatus.SYNCED,
+            syncedAt: new Date(),
+            createdAt: new Date(change.updatedAt),
+            updatedAt: new Date(change.updatedAt)
           }
         })
 
@@ -72,11 +136,13 @@ export class SyncService implements ISyncService {
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Unknown error"
         await this.createLog(change.fileId, SyncAction.UPDATE, SyncLogStatus.FAILED, msg)
+        console.error(`Sync error for ${change.fileId}:`, err)
       }
     }
 
     return { pushed, pulled: 0, conflicts }
   }
+
 
   async pullChanges(workspaceId: string, since: Date): Promise<FileNode[]> {
     const files = await this.prisma.file.findMany({
