@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react"
 import { FileType } from "../types"
 import type { LocalFile } from "../lib/db"
-import { Code, Eye, Columns, FolderOpen, FileText } from "lucide-react"
+import { Code, Eye, Columns, FolderOpen, FileText, Plus, CheckCircle2, Circle, CheckSquare } from "lucide-react"
 
 import { EditorView, basicSetup } from "codemirror"
 import { EditorState } from "@codemirror/state"
@@ -48,6 +48,11 @@ function CodeEditor({
             onContentChange(file.id, v.state.doc.toString())
           }
         }),
+        EditorView.theme({
+          "&": { height: "100%", backgroundColor: "var(--bg-primary)" },
+          ".cm-scroller": { fontFamily: "var(--font-mono)", fontSize: "14px" },
+          ".cm-gutters": { backgroundColor: "var(--bg-secondary)", color: "var(--text-muted)", border: "none" }
+        })
       ],
     })
 
@@ -92,25 +97,28 @@ function MarkdownEditor({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-      <div style={{ display: "flex", gap: 4, padding: 8 }}>
-        <button onClick={() => setMode("edit")}><Code size={14} /> Edit</button>
-        <button onClick={() => setMode("preview")}><Eye size={14} /> Preview</button>
-        <button onClick={() => setMode("split")}><Columns size={14} /> Split</button>
+      <div style={{ display: "flex", gap: 4, padding: "8px 16px", borderBottom: '1px solid var(--surface-border)' }}>
+        <button className={`btn btn-sm ${mode === 'edit' ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setMode("edit")}><Code size={14} /> Edit</button>
+        <button className={`btn btn-sm ${mode === 'preview' ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setMode("preview")}><Eye size={14} /> Preview</button>
+        <button className={`btn btn-sm ${mode === 'split' ? 'btn-primary' : 'btn-ghost'}`} onClick={() => setMode("split")}><Columns size={14} /> Split</button>
       </div>
 
-      <div style={{ display: "flex", flex: 1 }}>
+      <div style={{ display: "flex", flex: 1, overflow: 'hidden' }}>
         {(mode === "edit" || mode === "split") && (
           <textarea
             value={content}
             onChange={(e) => update(e.target.value)}
-            style={{ flex: 1 }}
+            className="input"
+            style={{ flex: 1, height: '100%', border: 'none', borderRadius: 0, resize: 'none', fontFamily: 'var(--font-mono)', padding: 20 }}
           />
         )}
 
+        {mode === "split" && <div style={{ width: 1, background: 'var(--surface-border)' }} />}
+
         {(mode === "preview" || mode === "split") && (
-          <div style={{ flex: 1, padding: 10, overflow: "auto" }}>
+          <div className="markdown-preview" style={{ flex: 1 }}>
             <ReactMarkdown remarkPlugins={[remarkGfm]}>
-              {content || "*Start writing...*"}
+              {content || "# Start writing markdown..."}
             </ReactMarkdown>
           </div>
         )}
@@ -143,9 +151,8 @@ function TodoEditor({
       const data = JSON.parse(file.content || "[]")
       if (Array.isArray(data)) parsed = data
     } catch (err) {
-  console.warn("Invalid JSON", err)
-}
-
+      console.warn("Invalid JSON", err)
+    }
     setTodos(parsed)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [file.id])
@@ -164,31 +171,47 @@ function TodoEditor({
     setInput("")
   }
 
-  return (
-    <div>
-      {todos.map((t) => (
-        <div key={t.id}>
-          <input
-            type="checkbox"
-            checked={t.completed}
-            onChange={() =>
-              save(
-                todos.map((x) =>
-                  x.id === t.id ? { ...x, completed: !x.completed } : x
-                )
-              )
-            }
-          />
-          {t.text}
-        </div>
-      ))}
+  const toggle = (id: string) => {
+    save(todos.map((t) => t.id === id ? { ...t, completed: !t.completed } : t))
+  }
 
-      <input
-        value={input}
-        onChange={(e) => setInput(e.target.value)}
-        onKeyDown={(e) => e.key === "Enter" && add()}
-      />
-      <button onClick={add}>Add</button>
+  return (
+    <div className="todo-list">
+      <div style={{ maxWidth: 600, margin: '0 auto' }}>
+          <h2 style={{ marginBottom: 20, display: 'flex', alignItems: 'center', gap: 10 }}>
+              <CheckSquare className="text-accent" /> Tasks
+          </h2>
+
+          <div style={{ display: 'flex', gap: 10, marginBottom: 30 }}>
+            <input
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && add()}
+                className="input"
+                style={{ flex: 1 }}
+                placeholder="What needs to be done?"
+            />
+            <button className="btn btn-primary" onClick={add}><Plus size={18} /></button>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {todos.map((t) => (
+                <div key={t.id} className={`todo-item ${t.completed ? 'completed' : ''}`} onClick={() => toggle(t.id)}>
+                    {t.completed ? <CheckCircle2 className="text-success" /> : <Circle className="text-muted" />}
+                    <span style={{ textDecoration: t.completed ? 'line-through' : 'none', opacity: t.completed ? 0.5 : 1 }}>
+                        {t.text}
+                    </span>
+                </div>
+            ))}
+          </div>
+
+          {todos.length === 0 && (
+              <div className="empty-state" style={{ marginTop: 40 }}>
+                  <CheckSquare size={48} />
+                  <p>Your task list is clear!</p>
+              </div>
+          )}
+      </div>
     </div>
   )
 }
@@ -218,7 +241,9 @@ function TextEditor({
         setContent(e.target.value)
         onContentChange(file.id, e.target.value)
       }}
-      style={{ width: "100%", height: "100%" }}
+      className="input"
+      style={{ width: "100%", height: "100%", border: 'none', borderRadius: 0, resize: 'none', padding: 40, background: 'var(--bg-primary)', fontSize: '1.1rem' }}
+      placeholder="Start typing your notes here..."
     />
   )
 }
@@ -228,17 +253,19 @@ function TextEditor({
 export default function Editor({ file, onContentChange }: EditorProps) {
   if (!file)
     return (
-      <div>
-        <FolderOpen size={50} />
-        <p>No file selected</p>
+      <div className="empty-state">
+        <FolderOpen size={64} className="text-muted" />
+        <h3>Empty Workspace</h3>
+        <p>Select a file from the sidebar to start working</p>
       </div>
     )
 
   if (file.type === FileType.FOLDER)
     return (
-      <div>
-        <FileText size={40} />
-        <p>{file.name} is a folder</p>
+      <div className="empty-state">
+        <FileText size={64} className="text-accent" />
+        <h3>{file.name}</h3>
+        <p>This is a directory. Open a file to view content.</p>
       </div>
     )
 
