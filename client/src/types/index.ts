@@ -3,7 +3,8 @@ export const FileType = {
   MARKDOWN: "MARKDOWN",
   CODE: "CODE",
   TODO: "TODO",
-  FOLDER: "FOLDER"
+  FOLDER: "FOLDER",
+  DOCUMENT: "DOCUMENT"
 } as const
 
 export type FileType = typeof FileType[keyof typeof FileType]
@@ -88,7 +89,8 @@ export const FILE_TYPE_ICONS: Record<FileType,string> = {
   [FileType.MARKDOWN]: "FileText",
   [FileType.CODE]: "FileCode",
   [FileType.TEXT]: "File",
-  [FileType.TODO]: "CheckSquare"
+  [FileType.TODO]: "CheckSquare",
+  [FileType.DOCUMENT]: "FileEdit"
 }
 
 export function getLanguageFromFilename(filename:string):string | null{
@@ -102,6 +104,7 @@ export function getFileTypeFromFilename(filename:string):FileType{
   if(!ext) return FileType.TEXT
   if(ext==="md"||ext==="markdown") return FileType.MARKDOWN
   if(ext==="todo") return FileType.TODO
+  if(ext==="sdoc" || ext==="doc") return FileType.DOCUMENT
   if(Object.keys(LANGUAGE_MAP).includes(ext)) return FileType.CODE
   return FileType.TEXT
 }

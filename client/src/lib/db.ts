@@ -131,9 +131,12 @@ async function del(store: any, key: string) {
 
 // WORKSPACES
 
-export async function getAllWorkspaces() {
+export async function getAllWorkspaces(ownerId?: string) {
   const db = await getDB()
-  return db.getAll("workspaces")
+  const all = await db.getAll("workspaces")
+  // Lenient filtering: If no ownerId exists (legacy), treat as 'local'
+  if (!ownerId) return all.filter(ws => !ws.ownerId || ws.ownerId === 'local')
+  return all.filter(ws => ws.ownerId === ownerId || !ws.ownerId || ws.ownerId === 'local')
 }
 
 export const getWorkspace = (id: string) =>
@@ -160,6 +163,20 @@ export const saveFile = (file: LocalFile) =>
 
 export const deleteFile = (id: string) =>
   del("files", id)
+
+export async function deleteFileRecursive(id: string) {
+  const db = await getDB()
+  const file = await db.get("files", id)
+  if (!file) return
+
+  // If it's a folder, recursively delete children
+  const children = await db.getAllFromIndex("files", "by-parentId", id)
+  for (const child of children) {
+    await deleteFileRecursive(child.id)
+  }
+
+  await db.delete("files", id)
+}
 
 // FILE VERSIONS
 

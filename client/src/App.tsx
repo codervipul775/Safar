@@ -6,143 +6,123 @@ import Auth from "./components/Auth";
 import VersionModal from "./components/VersionModal";
 import Runner from "./components/Runner";
 import { CreateFileModal, CreateWorkspaceModal } from "./components/Modal";
+import Dashboard from "./components/Dashboard";
 
 import {
+  getFilesByWorkspace,
+  getAllWorkspaces,
+  saveFile,
+  saveWorkspace,
+} from "./lib/db";
+import type { LocalFile, LocalWorkspace } from "./lib/db";
+import {
+  SyncStatus,
+  FileType,
   getFileTypeFromFilename,
   getLanguageFromFilename,
-  FileType,
-  SyncStatus
 } from "./types";
-
-import type { FileTreeNode, OpenTab, Workspace } from "./types";
-
-import {
-  getAllWorkspaces,
-  saveWorkspace,
-  getFilesByWorkspace,
-  getFile,
-  saveFile,
-  generateId,
-} from "./lib/db";
-
+import type { OpenTab } from "./types";
 import { SyncService } from "./lib/syncService";
-import type { LocalFile, LocalWorkspace } from "./lib/db";
 
-// ===== BUILD TREE =====
-function buildTree(files: LocalFile[]): FileTreeNode[] {
-  const map = new Map<string, FileTreeNode>();
-
-  files.forEach((f) =>
-    map.set(f.id, {
-      ...f,
-      children: [],
-      isExpanded: false,
-    } as FileTreeNode)
-  );
-
-  const roots: FileTreeNode[] = [];
-
-  map.forEach((node) => {
-    if (node.parentId && map.has(node.parentId)) {
-      map.get(node.parentId)!.children.push(node);
-    } else {
-      roots.push(node);
-    }
+function buildTree(files: LocalFile[]): any[] {
+  const map = new Map<string | null, any[]>();
+  
+  files.forEach(f => {
+    const node: any = { ...f, children: [], isExpanded: true };
+    if (!map.has(f.parentId)) map.set(f.parentId, []);
+    map.get(f.parentId)!.push(node);
   });
 
-  return roots;
+  const forest = map.get(null) || [];
+  const assemble = (nodes: any[]) => {
+    nodes.forEach(n => {
+      n.children = map.get(n.id) || [];
+      assemble(n.children);
+    });
+  };
+  assemble(forest);
+  return forest;
 }
 
-// ===== APP =====
 export default function App() {
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
-  const [activeWs, setActiveWs] = useState<Workspace | null>(null);
-
-  const [files, setFiles] = useState<LocalFile[]>([]);
-  const [tree, setTree] = useState<FileTreeNode[]>([]);
-
-  const [activeFile, setActiveFile] = useState<LocalFile | null>(null);
-  const [tabs, setTabs] = useState<OpenTab[]>([]);
-
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [user, setUser] = useState<any>(null);
-  const [showAuth, setShowAuth] = useState(false);
-
+  const [workspaces, setWorkspaces] = useState<LocalWorkspace[]>([]);
+  const [activeWs, setActiveWs] = useState<LocalWorkspace | null>(null);
+  const [files, setFiles] = useState<LocalFile[]>([]);
+  const [tree, setTree] = useState<any[]>([]);
+  const [tabs, setTabs] = useState<OpenTab[]>([]);
+  const [activeFile, setActiveFile] = useState<LocalFile | null>(null);
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  
   const [showWsModal, setShowWsModal] = useState(false);
   const [showFileModal, setShowFileModal] = useState(false);
   const [showVersionModal, setShowVersionModal] = useState(false);
+  const [showAuth, setShowAuth] = useState(false);
   const [showRunner, setShowRunner] = useState(false);
   const [runnerKey, setRunnerKey] = useState(0);
-  const runSnapshotRef = useRef<string | null>(null);
-  const liveValueRef = useRef<Map<string, string>>(new Map());
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+
   const [isFolder, setIsFolder] = useState(false);
   const [parentId, setParentId] = useState<string | null>(null);
+  const [pendingType, setPendingType] = useState<FileType | null>(null);
 
   const [saveStatus, setSaveStatus] = useState<"synced" | "saving" | "local" | "cloud">("cloud");
+  const [viewMode, setViewMode] = useState<'DASHBOARD' | 'CODE' | 'DOCS'>('DASHBOARD');
+  const [pendingMode, setPendingMode] = useState<'CODE' | 'DOCS' | null>(null);
+
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    const saved = localStorage.getItem("safar_theme");
+    return (saved as 'light' | 'dark') || 'light';
+  });
 
   const pendingRef = useRef<Map<string, string>>(new Map());
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const liveValueRef = useRef<Map<string, string>>(new Map());
+  const runSnapshotRef = useRef<string | null>(null);
+
+  // ===== THEME SYNC =====
+  useEffect(() => {
+    document.body.classList.toggle('dark-theme', theme === 'dark');
+    localStorage.setItem("safar_theme", theme);
+  }, [theme]);
+
   // ===== INITIAL LOAD =====
   useEffect(() => {
-    // Auth Check
     const storedUser = localStorage.getItem("safar_user")
     if (storedUser) {
       const u = JSON.parse(storedUser);
       setUser(u);
-      // Upgrade existing LOCAL_ONLY content to PENDING on load if logged in
-      (async () => {
-         const wsList = await getAllWorkspaces()
-         for (const ws of wsList) {
-           if (ws.syncStatus === SyncStatus.LOCAL_ONLY) await saveWorkspace({ ...ws, syncStatus: SyncStatus.PENDING })
-           const fileList = await getFilesByWorkspace(ws.id)
-           for (const f of fileList) {
-             if (f.syncStatus === SyncStatus.LOCAL_ONLY) await saveFile({ ...f, syncStatus: SyncStatus.PENDING })
-           }
-         }
-         refreshFiles();
-         SyncService.pushChanges().then(count => { if (count > 0) refreshFiles(); });
-      })();
     }
 
-    // Online Status
     const handleOnline = () => setIsOnline(true)
     const handleOffline = () => setIsOnline(false)
     window.addEventListener("online", handleOnline)
     window.addEventListener("offline", handleOffline)
 
-    // Load Workspaces
     ;(async () => {
-      const data = await getAllWorkspaces();
-      const mapped = data.map(ws => ({ ...ws, syncStatus: ws.syncStatus as SyncStatus }));
-      setWorkspaces(mapped);
-      if (mapped[0]) setActiveWs(mapped[0]);
+      const data = await getAllWorkspaces(user?.id);
+      setWorkspaces(data);
+      if (data.length > 0 && !activeWs) {
+        setActiveWs(data[0]);
+      }
     })();
 
     return () => {
       window.removeEventListener("online", handleOnline)
       window.removeEventListener("offline", handleOffline)
     }
-  }, []);
+  }, [user?.id, activeWs?.id]);
 
   // ===== SYNC INTERVAL =====
   useEffect(() => {
     if (!isOnline || !user) return;
-
     const interval = setInterval(() => {
-      SyncService.pushChanges().then(count => {
-         if (count > 0) refreshFiles();
-      });
-      if (activeWs) SyncService.pullChanges(activeWs.id).then(changed => {
-         if (changed) refreshFiles();
-      });
+      SyncService.pushChanges();
     }, 5000);
-
     return () => clearInterval(interval);
   }, [isOnline, user, activeWs]);
 
-  // ===== DATABASE REFRESH =====
   const refreshFiles = useCallback(async () => {
     if (!activeWs) return;
     const f = await getFilesByWorkspace(activeWs.id);
@@ -150,148 +130,91 @@ export default function App() {
     setTree(buildTree(f));
   }, [activeWs]);
 
+  useEffect(() => { refreshFiles(); }, [refreshFiles]);
+
+  // ===== MODE-AWARE CONTEXT SWITCHING =====
   useEffect(() => {
-    refreshFiles();
-  }, [refreshFiles]);
+    if (viewMode === 'DASHBOARD') {
+      setActiveFile(null);
+      return;
+    }
 
-  // ===== SELECT FILE =====
-  const openFile = async (id: string) => {
-    const file = await getFile(id);
-    if (!file || file.type === FileType.FOLDER) return;
-
-    setActiveFile(file);
-
-    setTabs((prev) =>
-      prev.find((t) => t.id === id)
-        ? prev
-        : [...prev, {
-            id: file.id,
-            name: file.name,
-            type: file.type,
-            language: file.language,
-            isModified: false
-          }]
-    );
-  };
-
-  // ===== CREATE WORKSPACE =====
-  const createWorkspace = async (name: string) => {
-    const ws: LocalWorkspace = {
-      id: generateId(),
-      name,
-      ownerId: user?.id || "local",
-      syncStatus: SyncStatus.LOCAL_ONLY,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    await saveWorkspace(ws);
-    setShowWsModal(false);
-
-    const updated = await getAllWorkspaces();
-    setWorkspaces(updated.map(ws => ({ ...ws, syncStatus: ws.syncStatus as SyncStatus })));
-    setActiveWs(ws as unknown as Workspace);
-  };
-
-  // ===== CREATE FILE =====
-  const createFile = async (name: string) => {
-    if (!activeWs) return;
-
-    const type = isFolder ? FileType.FOLDER : getFileTypeFromFilename(name);
-
-    const file: LocalFile = {
-      id: generateId(),
-      name,
-      type,
-      content: type === FileType.TODO ? "[]" : "",
-      language: isFolder ? null : getLanguageFromFilename(name),
-      parentId,
-      workspaceId: activeWs.id,
-      syncStatus: user ? SyncStatus.PENDING : SyncStatus.LOCAL_ONLY,
-      syncedAt: null,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    await saveFile(file);
-    setShowFileModal(false);
-    refreshFiles();
-
-    if (type !== FileType.FOLDER) openFile(file.id);
-  };
-
-  const userRef = useRef(user);
-  useEffect(() => { userRef.current = user; }, [user]);
-
-  // ===== INITIAL LOAD =====
-  // ... rest of useEffect (already handled)
-
-  // ... (Sync Interval etc.)
-
-  // ===== CONTENT CHANGE =====
-  const onChange = useCallback((id: string, content: string) => {
-    pendingRef.current.set(id, content);
-    liveValueRef.current.set(id, content);
-
-    setTabs((prev) =>
-      prev.map((t) => (t.id === id ? { ...t, isModified: true } : t))
-    );
-
-    if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(onSave, 1500);
-  }, []);
-
-  const saveAll = async () => {
-    const currentUser = userRef.current;
+    const currentType = viewMode === 'DOCS' ? FileType.DOCUMENT : FileType.CODE;
     
-    for (const [id, content] of pendingRef.current) {
-      const file = await getFile(id);
-      if (!file) continue;
-
-      await saveFile({
-        ...file,
-        content,
-        syncStatus: currentUser ? SyncStatus.PENDING : SyncStatus.LOCAL_ONLY,
-        updatedAt: new Date().toISOString(),
+    // If current file is incompatible with mode, find a better one
+    if (activeFile && activeFile.type !== currentType) {
+      const compatibleTab = tabs.find(t => {
+        const f = files.find(x => x.id === t.id);
+        return f?.type === currentType;
       });
-    }
 
-    pendingRef.current.clear();
-    setTabs((t) => t.map((x) => ({ ...x, isModified: false })));
-    refreshFiles();
-    
-    if (isOnline && currentUser) SyncService.pushChanges().then(count => {
-        if (count > 0) refreshFiles();
-    });
+      if (compatibleTab) {
+        const target = files.find(x => x.id === compatibleTab.id);
+        if (target) setActiveFile(target);
+      } else {
+        // Find FIRST file in the workspace of correct type if no tabs open
+        const firstMatch = files.find(f => f.type === currentType);
+        setActiveFile(firstMatch || null);
+      }
+    } else if (!activeFile) {
+        const firstMatch = files.find(f => f.type === currentType);
+        setActiveFile(firstMatch || null);
+    }
+  }, [viewMode, files.length]);
+
+  const openFile = async (id: string) => {
+    const f = files.find(x => x.id === id);
+    if (!f) return;
+    setActiveFile(f);
+    if (!tabs.find(t => t.id === id)) {
+      setTabs([...tabs, { 
+        id: f.id, 
+        name: f.name, 
+        type: f.type as FileType, 
+        language: f.language,
+        isModified: false 
+      }]);
+    }
   };
 
-  // ===== CLOSE TAB =====
   const closeTab = (id: string) => {
-    setTabs((prev) => prev.filter((t) => t.id !== id));
-    if (activeFile?.id === id) setActiveFile(null);
+    const newTabs = tabs.filter(t => t.id !== id);
+    setTabs(newTabs);
+    if (activeFile?.id === id) {
+      setActiveFile(newTabs.length > 0 ? files.find(f => f.id === newTabs[newTabs.length - 1].id) || null : null);
+    }
   };
 
-  // ===== TOPBAR ACTIONS =====
-  const onSave = async () => {
-    setSaveStatus("saving");
-    await saveAll();
-    
-    const currentUser = userRef.current;
-    
-    if (isOnline && currentUser) {
-        const syncedCount = await SyncService.pushChanges();
-        if (syncedCount > 0) refreshFiles();
-        setSaveStatus("cloud");
-    } else {
-        setSaveStatus("local");
+  const onChange = (id: string, content: string) => {
+    // IMMEDIATE UPDATE FOR FLUID UI
+    if (activeFile?.id === id) {
+      setActiveFile({ ...activeFile, content });
     }
     
-    // Reset to cloud status after a delay if everything was already synced
-    setTimeout(() => {
-        if (pendingRef.current.size === 0) {
-            setSaveStatus(isOnline && currentUser ? "cloud" : "local");
+    liveValueRef.current.set(id, content);
+    setTabs(prev => prev.map(t => t.id === id ? { ...t, isModified: true } : t));
+    
+    if (timerRef.current) clearTimeout(timerRef.current);
+    pendingRef.current.set(id, content);
+    setSaveStatus("saving");
+
+    timerRef.current = setTimeout(async () => {
+      for (const [fid, val] of pendingRef.current.entries()) {
+        const found = files.find(x => x.id === fid);
+        if (found) {
+           await saveFile({ ...found, content: val, syncStatus: user ? SyncStatus.PENDING : SyncStatus.LOCAL_ONLY, updatedAt: new Date().toISOString() });
         }
-    }, 2000);
+      }
+      pendingRef.current.clear();
+      setSaveStatus(user ? "synced" : "local");
+      setTabs(prev => prev.map(t => t.id === id ? { ...t, isModified: false } : t));
+      
+      if (activeWs) {
+          const updatedFiles = await getFilesByWorkspace(activeWs.id);
+          setFiles(updatedFiles);
+          setTree(buildTree(updatedFiles));
+      }
+    }, 1000);
   };
 
   const onRestoreVersion = (content: string) => {
@@ -308,145 +231,202 @@ export default function App() {
   };
 
   const onFullscreen = () => {
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen();
-    } else {
-      if (document.exitFullscreen) {
-        document.exitFullscreen();
-      }
-    }
+    if (!document.fullscreenElement) document.documentElement.requestFullscreen();
+    else if (document.exitFullscreen) document.exitFullscreen();
   };
 
   const onLogout = () => {
     localStorage.removeItem("safar_token");
     localStorage.removeItem("safar_user");
     setUser(null);
+    setActiveWs(null);
+    setFiles([]);
+    setTree([]);
+    setTabs([]);
+    setActiveFile(null);
     window.location.reload();
+  };
+
+  const onDeleteFile = async (id: string) => {
+    if (!confirm("Are you sure you want to delete this? All contents will be lost.")) return;
+    const { deleteFileRecursive } = await import("./lib/db");
+    await deleteFileRecursive(id);
+    setTabs(tabs.filter(t => t.id !== id));
+    if (activeFile?.id === id) setActiveFile(null);
+    refreshFiles();
+  };
+
+  const createWorkspace = async (name: string) => {
+    const ws: LocalWorkspace = {
+      id: crypto.randomUUID(),
+      name,
+      ownerId: user?.id || "local",
+      syncStatus: user ? SyncStatus.PENDING : SyncStatus.LOCAL_ONLY,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    await saveWorkspace(ws);
+    setWorkspaces([...workspaces, ws]);
+    setActiveWs(ws);
+    setShowWsModal(false);
+  };
+
+  const createFile = async (name: string) => {
+    if (!activeWs) return;
+
+    // DUPLICATE GUARD
+    const isDuplicate = files.some(f => f.name.toLowerCase() === name.toLowerCase() && f.parentId === parentId);
+    if (isDuplicate) {
+        alert(`A resource named "${name}" already exists here. Please choose a different name.`);
+        return;
+    }
+
+    let type = getFileTypeFromFilename(name);
+    if (type === FileType.TEXT && pendingType) {
+        type = pendingType;
+    }
+
+    const f: LocalFile = {
+      id: crypto.randomUUID(),
+      workspaceId: activeWs.id,
+      parentId,
+      name,
+      type: isFolder ? FileType.FOLDER : type,
+      content: "",
+      language: getLanguageFromFilename(name),
+      syncStatus: user ? SyncStatus.PENDING : SyncStatus.LOCAL_ONLY,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      syncedAt: null
+    };
+    await saveFile(f);
+    setShowFileModal(false);
+    refreshFiles();
+    if (!isFolder) openFile(f.id);
   };
 
   const handleAuthSuccess = async (u: any) => {
     setUser(u);
     setShowAuth(false);
-
     const wsList = await getAllWorkspaces()
     for (const ws of wsList) {
-      if (ws.syncStatus === SyncStatus.LOCAL_ONLY) {
-        await saveWorkspace({ ...ws, syncStatus: SyncStatus.PENDING })
-      }
-      
+      if (ws.syncStatus === SyncStatus.LOCAL_ONLY) await saveWorkspace({ ...ws, syncStatus: SyncStatus.PENDING })
       const fileList = await getFilesByWorkspace(ws.id)
       for (const f of fileList) {
-        if (f.syncStatus === SyncStatus.LOCAL_ONLY) {
-          await saveFile({ ...f, syncStatus: SyncStatus.PENDING })
-        }
+        if (f.syncStatus === SyncStatus.LOCAL_ONLY) await saveFile({ ...f, syncStatus: SyncStatus.PENDING })
       }
     }
-
     refreshFiles();
     SyncService.pushChanges();
+    if (pendingMode) { setViewMode(pendingMode); setPendingMode(null); }
+  };
+
+  const handleSelectMode = (mode: 'CODE' | 'DOCS') => {
+    setViewMode(mode);
+    if (!user) { 
+        console.warn("Safar Studio: Entering as Guest. Cloud sync disabled.");
+        setPendingMode(mode); 
+    }
   };
 
   return (
-    <div className="app-layout">
-      <Sidebar
-        workspaces={workspaces}
-        activeWorkspace={activeWs}
-        fileTree={tree}
-        activeFileId={activeFile?.id || null}
-        isOnline={isOnline}
-        pendingChanges={files.filter(f => f.syncStatus === SyncStatus.PENDING).length}
-        sidebarOpen={sidebarOpen}
-        onSelectWorkspace={setActiveWs}
-        onCreateWorkspace={() => setShowWsModal(true)}
-        onSelectFile={openFile}
-        onCreateFile={(pid, type) => {
-          setParentId(pid);
-          setIsFolder(type === FileType.FOLDER);
-          setShowFileModal(true);
-        }}
-        onToggleFolder={(id) => {
-            setTree(prev => prev.map(function mapNode(node): FileTreeNode {
-                if (node.id === id) return { ...node, isExpanded: !node.isExpanded };
-                return { ...node, children: node.children.map(mapNode) };
-            }));
-        }}
-      />
-
-      <div className="app-main">
-        <Topbar
-          tabs={tabs}
-          activeTabId={activeFile?.id || null}
-          user={user}
-          saveStatus={saveStatus}
-          onSelectTab={openFile}
-          onCloseTab={closeTab}
-          onSave={onSave}
-          onShare={onShare}
-          onFullscreen={onFullscreen}
+    <>
+      {viewMode === 'DASHBOARD' ? (
+        <Dashboard 
+          user={user} 
+          onSelectMode={handleSelectMode} 
+          onSignIn={() => setShowAuth(true)}
           onLogout={onLogout}
-          onToggleSidebar={() => setSidebarOpen((s) => !s)}
-          onShowVersions={() => setShowVersionModal(true)}
-          onRunCode={async () => {
-            if (activeFile) {
-              // Priority: Live buffer > Saved content
-              const currentContent = liveValueRef.current.get(activeFile.id) || activeFile.content || "";
-              runSnapshotRef.current = currentContent;
-            }
-            await saveAll(); // Ensure current editor content is saved to DB first
-            setRunnerKey(k => k + 1)
-            setShowRunner(true)
-          }}
         />
-
-        {!user && (
-          <div style={{ position: 'absolute', top: 12, right: 120, zIndex: 60 }}>
-            <button className="btn btn-primary" onClick={() => setShowAuth(true)}>Sync to Cloud</button>
-          </div>
-        )}
-
-        <div className="app-content">
-          <div className="editor-pane">
-            <Editor file={activeFile} onContentChange={onChange} />
-          </div>
-
-          {showRunner && activeFile && (
-            <Runner 
-              key={`${activeFile.id}-${runnerKey}`}
-              file={activeFile} 
-              code={runSnapshotRef.current ?? activeFile.content ?? ""}
-              onClose={() => setShowRunner(false)} 
+      ) : (
+        <div className={`app-layout ${viewMode.toLowerCase()}-mode`}>
+            <Sidebar
+              workspaces={workspaces as any}
+              activeWorkspace={activeWs as any}
+              fileTree={tree}
+              activeFileId={activeFile?.id || null}
+              isOnline={isOnline}
+              pendingChanges={files.filter(f => f.syncStatus === SyncStatus.PENDING).length}
+              sidebarOpen={sidebarOpen}
+              onSelectWorkspace={(ws) => setActiveWs(ws as LocalWorkspace)}
+              onCreateWorkspace={() => setShowWsModal(true)}
+              onSelectFile={openFile}
+              onDeleteFile={onDeleteFile}
+              onCreateFile={(pid, type) => {
+                setParentId(pid);
+                setIsFolder(type === FileType.FOLDER);
+                setPendingType(type);
+                setShowFileModal(true);
+              }}
+              onToggleFolder={(id) => {
+                  setTree(prev => prev.map(function mapNode(node): any {
+                      if (node.id === id) return { ...node, isExpanded: !node.isExpanded };
+                      return { ...node, children: node.children.map(mapNode) };
+                  }));
+              }}
+              viewMode={viewMode}
             />
-          )}
+
+          <div className="app-main">
+            <Topbar
+              tabs={tabs.filter(t => {
+                const f = files.find(x => x.id === t.id);
+                const currentType = viewMode === 'DOCS' ? FileType.DOCUMENT : FileType.CODE;
+                return f?.type === currentType;
+              })}
+              activeTabId={activeFile?.id || null}
+              user={user}
+              saveStatus={saveStatus}
+              theme={theme}
+              onToggleTheme={() => setTheme(prev => prev === 'light' ? 'dark' : 'light')}
+              onSelectTab={openFile}
+              onCloseTab={closeTab}
+              onSave={() => {}}
+              onShare={onShare}
+              onFullscreen={onFullscreen}
+              onLogout={onLogout}
+              onToggleSidebar={() => setSidebarOpen((s) => !s)}
+              onShowVersions={() => setShowVersionModal(true)}
+              onGoHome={() => setViewMode('DASHBOARD')}
+              onRunCode={async () => {
+                if (activeFile) {
+                  const currentContent = liveValueRef.current.get(activeFile.id) || activeFile.content || "";
+                  runSnapshotRef.current = currentContent;
+                }
+                setRunnerKey(k => k + 1)
+                setShowRunner(true)
+              }}
+              viewMode={viewMode}
+            />
+
+            <div className="app-content">
+              <div className="editor-pane">
+                <Editor 
+                  file={activeFile as any} 
+                  onContentChange={onChange} 
+                  viewMode={viewMode} 
+                  theme={theme}
+                />
+              </div>
+
+              {showRunner && activeFile && (
+                <Runner 
+                  key={`${activeFile.id}-${runnerKey}`}
+                  file={activeFile as any} 
+                  code={runSnapshotRef.current ?? activeFile.content ?? ""}
+                  onClose={() => setShowRunner(false)} 
+                />
+              )}
+            </div>
+          </div>
         </div>
-      </div>
-
-      <CreateWorkspaceModal
-        isOpen={showWsModal}
-        onClose={() => setShowWsModal(false)}
-        onSubmit={createWorkspace}
-      />
-
-      <CreateFileModal
-        isOpen={showFileModal}
-        isFolder={isFolder}
-        onClose={() => setShowFileModal(false)}
-        onSubmit={createFile}
-      />
-
-      {showVersionModal && activeFile && (
-        <VersionModal 
-            fileId={activeFile.id}
-            onClose={() => setShowVersionModal(false)}
-            onRestore={onRestoreVersion}
-        />
       )}
 
-      {showAuth && (
-        <Auth 
-          onSuccess={handleAuthSuccess} 
-          onClose={() => setShowAuth(false)} 
-        />
-      )}
-    </div>
+      {/* Overlays */}
+      <CreateWorkspaceModal isOpen={showWsModal} onClose={() => setShowWsModal(false)} onSubmit={createWorkspace} />
+      <CreateFileModal isOpen={showFileModal} isFolder={isFolder} onClose={() => setShowFileModal(false)} onSubmit={createFile} />
+      {showVersionModal && activeFile && <VersionModal fileId={activeFile.id} onClose={() => setShowVersionModal(false)} onRestore={onRestoreVersion} />}
+      {showAuth && <Auth onSuccess={handleAuthSuccess} onClose={() => setShowAuth(false)} />}
+    </>
   );
 }
