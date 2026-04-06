@@ -19,9 +19,9 @@ import TaskItem from '@tiptap/extension-task-item'
 import html2pdf from 'html2pdf.js'
 
 import { 
-  Bold, Italic, Underline as UnderlineIcon, List, ListOrdered, Quote, Heading1, Heading2, 
-  Table as TableIcon, Code, Minus, Undo, Redo, AlignLeft, AlignCenter, AlignRight, 
-  AlignJustify, Link as LinkIcon, Type, Highlighter, Eraser, Printer, PaintRoller, 
+  Bold, Italic, Underline as UnderlineIcon, List, ListOrdered, 
+  Table as TableIcon, Minus, Undo, Redo, AlignLeft, AlignCenter, 
+  Link as LinkIcon, Type, Highlighter, Eraser, Printer, PaintRoller, 
   Search, ZoomIn, CheckSquare, IndentIncrease, IndentDecrease, BetweenVerticalStart,
   ChevronDown, Plus, FileDown
 } from 'lucide-react'
@@ -54,13 +54,13 @@ const FontSize = Extension.create({
   },
   addCommands() {
     return {
-      setFontSize: fontSize => ({ chain }) => {
+      setFontSize: (fontSize: string) => ({ chain }: { chain: any }) => {
         return chain().setMark('textStyle', { fontSize }).run()
       },
-      unsetFontSize: () => ({ chain }) => {
-        return chain().setMark('textStyle', { fontSize: null }).removeEmptyTextStyle().run()
+      unsetFontSize: () => ({ chain }: { chain: any }) => {
+        return (chain() as any).setMark('textStyle', { fontSize: null }).removeEmptyTextStyle().run()
       },
-    }
+    } as any
   },
 })
 

@@ -31,8 +31,14 @@ export class WorkspaceService implements IWorkspaceService {
     if (existing)
       throw new Error(`Workspace "${name}" already exists`)
 
+    const wsId = `ws_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`
+    
     const dbWorkspace = await this.prisma.workspace.create({
-      data: { name, ownerId: data.ownerId },
+      data: { 
+        id: wsId, // MANDATORY ID LOCK
+        name, 
+        ownerId: data.ownerId 
+      },
     })
 
     return Workspace.fromPrisma(dbWorkspace)

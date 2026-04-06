@@ -14,7 +14,7 @@ export class SyncController {
       if (!Array.isArray(workspaces))
         return void res.status(400).json({ error: "workspaces array is required" })
 
-      const count = await this.syncService.pushWorkspaces(req.user.id, workspaces)
+      const count = await this.syncService.pushWorkspaces(req.user.id, req.user.email, workspaces)
 
       res.status(200).json({
         message: "Workspaces synced",
@@ -32,10 +32,11 @@ export class SyncController {
         return void res.status(401).json({ error: "Not authenticated" })
 
       const { changes } = req.body
+      console.log(`Sync: Received ${changes?.length} file changes for user ${req.user.email}`)
       if (!Array.isArray(changes))
         return void res.status(400).json({ error: "changes array is required" })
 
-      const result = await this.syncService.pushChanges(req.user.id, changes)
+      const result = await this.syncService.pushChanges(req.user.id, req.user.email, changes)
 
       res.status(200).json({
         message: "Sync push complete",
@@ -49,10 +50,20 @@ export class SyncController {
 
   pullChanges = async (req: AuthRequest, res: Response): Promise<void> => {
     try {
+      if (!req.user)
+        return void res.status(401).json({ error: "Not authenticated" })
+
       const { workspaceId, since } = req.query
 
-      if (!workspaceId || typeof workspaceId !== "string")
-        return void res.status(400).json({ error: "workspaceId query param is required" })
+      // FULL ACCOUNT PULL (Recovery Mode)
+      if (!workspaceId) {
+        const data = await this.syncService.pullFull(req.user.id, req.user.email)
+        return void res.status(200).json(data)
+      }
+
+      // INCREMENTAL WORKSPACE PULL
+      if (typeof workspaceId !== "string")
+        return void res.status(400).json({ error: "workspaceId must be a string" })
 
       const sinceDate = since ? new Date(since as string) : new Date(0)
       const files = await this.syncService.pullChanges(workspaceId, sinceDate)
@@ -61,7 +72,8 @@ export class SyncController {
         files: files.map(f => f.toJSON()),
         pulledAt: new Date().toISOString()
       })
-    } catch {
+    } catch (err) {
+      console.error("Pull error:", err)
       res.status(500).json({ error: "Sync pull failed" })
     }
   }

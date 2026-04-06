@@ -6,7 +6,8 @@ import type { DBSchema, IDBPDatabase } from "idb"
 export interface LocalWorkspace {
   id: string
   name: string
-  ownerId: string
+  ownerId?: string
+  ownerEmail?: string
   syncStatus: string
   createdAt: string
   updatedAt: string
@@ -20,6 +21,8 @@ export interface LocalFile {
   language: string | null
   parentId: string | null
   workspaceId: string
+  ownerId?: string
+  ownerEmail?: string
   syncStatus: string
   syncedAt: string | null
   createdAt: string
@@ -86,7 +89,7 @@ export async function getDB() {
   if (db) return db
 
   db = await openDB<SafarSetuDB>(DB_NAME, DB_VERSION, {
-    upgrade(db) {
+    upgrade(db: IDBPDatabase<SafarSetuDB>) {
 
       const ws = db.createObjectStore("workspaces", { keyPath: "id" })
       ws.createIndex("by-syncStatus", "syncStatus")
@@ -131,12 +134,9 @@ async function del(store: any, key: string) {
 
 // WORKSPACES
 
-export async function getAllWorkspaces(ownerId?: string) {
+export async function getAllWorkspaces() {
   const db = await getDB()
-  const all = await db.getAll("workspaces")
-  // Lenient filtering: If no ownerId exists (legacy), treat as 'local'
-  if (!ownerId) return all.filter(ws => !ws.ownerId || ws.ownerId === 'local')
-  return all.filter(ws => ws.ownerId === ownerId || !ws.ownerId || ws.ownerId === 'local')
+  return db.getAll("workspaces")
 }
 
 export const getWorkspace = (id: string) =>
@@ -197,3 +197,17 @@ export async function getSyncLogs(fileId: string) {
 
 export const saveSyncLog = (log: LocalSyncLog) =>
   put("syncLogs", log)
+
+// CLEAR ALL DATA (used on logout to prevent cross-account data leaks)
+
+export async function clearAllData() {
+  const db = await getDB()
+  const tx = db.transaction(["workspaces", "files", "fileVersions", "syncLogs"], "readwrite")
+  await Promise.all([
+    tx.objectStore("workspaces").clear(),
+    tx.objectStore("files").clear(),
+    tx.objectStore("fileVersions").clear(),
+    tx.objectStore("syncLogs").clear(),
+    tx.done
+  ])
+}

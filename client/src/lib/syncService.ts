@@ -1,5 +1,5 @@
 import { api } from "./api"
-import { getFile, getFilesByWorkspace, saveFile, getAllWorkspaces, saveWorkspace } from "./db"
+import { saveFile, getAllWorkspaces, saveWorkspace, getFilesByWorkspace } from "./db"
 import { SyncStatus } from "../types"
 
 export class SyncService {
@@ -11,13 +11,13 @@ export class SyncService {
 
     try {
       const workspaces = await getAllWorkspaces()
-      const localOnly = workspaces.filter(ws => ws.syncStatus === SyncStatus.LOCAL_ONLY)
+      const needsSync = workspaces.filter((ws: any) => ws.syncStatus === SyncStatus.LOCAL_ONLY || ws.syncStatus === SyncStatus.PENDING)
 
-      if (localOnly.length > 0) {
-        console.log(`Sync: Pushing ${localOnly.length} workspaces...`)
-        const res = await api.post("/sync/workspaces", { workspaces: localOnly })
+      if (needsSync.length > 0) {
+        console.log(`Sync: Pushing ${needsSync.length} workspaces...`)
+        const res = await api.post("/sync/workspaces", { workspaces: needsSync })
         
-        for (const ws of localOnly) {
+        for (const ws of needsSync) {
            await saveWorkspace({
              ...ws,
              syncStatus: SyncStatus.SYNCED
@@ -30,8 +30,57 @@ export class SyncService {
     }
   }
 
-  static async pushChanges(): Promise<number> {
-    if (this.isSyncing) return 0
+  /**
+   * Pulls data from the cloud.
+   * If workspaceId is provided, it pulls updates for that workspace.
+   * If no workspaceId is provided, it pulls ALL user content (Full Recovery).
+   */
+  static async pullChanges(workspaceId: string | null = null) {
+    const token = localStorage.getItem("safar_token")
+    if (!token) return false
+
+    try {
+      if (!workspaceId) {
+        // FULL RECOVERY MODE (Cache-busted)
+        console.log("Sync: Performing full cloud recovery...")
+        const { data } = await api.get(`/sync/pull?t=${Date.now()}`)
+        const { workspaces, files } = data
+
+        for (const ws of workspaces) {
+          await saveWorkspace({ ...ws, syncStatus: SyncStatus.SYNCED })
+        }
+        for (const f of files) {
+          await saveFile({ ...f, syncStatus: SyncStatus.SYNCED })
+        }
+        console.log(`Sync: Recovered ${workspaces.length} workspaces and ${files.length} files.`)
+        return true
+      } else {
+        // INCREMENTAL UPDATE MODE
+        const lastSync = localStorage.getItem(`last_sync_${workspaceId}`) || new Date(0).toISOString()
+        const res = await api.get(`/sync/pull?workspaceId=${workspaceId}&since=${lastSync}`)
+        const remoteFiles = res.data.files
+
+        if (remoteFiles.length > 0) {
+          console.log(`Sync: Pulling ${remoteFiles.length} file updates...`)
+          for (const rf of remoteFiles) {
+             await saveFile({
+               ...rf,
+               syncStatus: SyncStatus.SYNCED,
+               syncedAt: new Date().toISOString()
+             })
+          }
+          localStorage.setItem(`last_sync_${workspaceId}`, new Date().toISOString())
+          return true
+        }
+      }
+    } catch (err) {
+      console.error("Sync: Pull failed", err)
+    }
+    return false
+  }
+
+  static async pushChanges(force: boolean = false): Promise<number> {
+    if (this.isSyncing && !force) return 0
     const token = localStorage.getItem("safar_token")
     if (!token) return 0
 
@@ -39,16 +88,16 @@ export class SyncService {
     let syncedCount = 0
     
     try {
-      await this.pushWorkspaces() // Ensure workspaces are synced first
+      await this.pushWorkspaces()
 
       const workspaces = await getAllWorkspaces()
       const allChanges: any[] = []
 
       for (const ws of workspaces) {
         const files = await getFilesByWorkspace(ws.id)
-        const pending = files.filter(f => f.syncStatus === SyncStatus.PENDING || f.syncStatus === SyncStatus.LOCAL_ONLY)
+        const pending = files.filter((f: any) => f.syncStatus === SyncStatus.PENDING || f.syncStatus === SyncStatus.LOCAL_ONLY)
         
-        pending.forEach(f => {
+        pending.forEach((f: any) => {
           allChanges.push({
             fileId: f.id,
             name: f.name,
@@ -61,25 +110,22 @@ export class SyncService {
         })
       }
 
-      if (allChanges.length === 0) {
-        this.isSyncing = false
-        return 0
-      }
+      if (allChanges.length > 0) {
+        console.log(`Sync: Found ${allChanges.length} local changes to push:`, allChanges)
+        const res = await api.post("/sync/push", { changes: allChanges })
+        const results = res.data.results
 
-      console.log(`Sync: Pushing ${allChanges.length} changes...`)
-      const res = await api.post("/sync/push", { changes: allChanges })
-      console.log("Sync: Push result", res.data)
-
-      for (const change of allChanges) {
-         const local = await getFile(change.fileId)
-         if (local) {
-           await saveFile({
-             ...local,
-             syncStatus: SyncStatus.SYNCED,
-             syncedAt: new Date().toISOString()
-           })
-           syncedCount++
-         }
+        for (const r of results) {
+           const f = await getFile(r.fileId)
+           if (f) {
+             await saveFile({
+               ...f,
+               syncStatus: SyncStatus.SYNCED,
+               syncedAt: new Date().toISOString()
+             })
+             syncedCount++
+           }
+        }
       }
 
       return syncedCount
@@ -91,33 +137,10 @@ export class SyncService {
       this.isSyncing = false
     }
   }
+}
 
-  static async pullChanges(activeWorkspaceId: string | null) {
-    if (!activeWorkspaceId) return
-    const token = localStorage.getItem("safar_token")
-    if (!token) return
-
-    try {
-      const lastSync = localStorage.getItem(`last_sync_${activeWorkspaceId}`) || new Date(0).toISOString()
-      
-      const res = await api.get(`/sync/pull?workspaceId=${activeWorkspaceId}&since=${lastSync}`)
-      const remoteFiles = res.data.files
-
-      if (remoteFiles.length > 0) {
-        console.log(`Sync: Pulling ${remoteFiles.length} files...`)
-        for (const rf of remoteFiles) {
-           await saveFile({
-             ...rf,
-             syncStatus: SyncStatus.SYNCED,
-             syncedAt: new Date().toISOString()
-           })
-        }
-        localStorage.setItem(`last_sync_${activeWorkspaceId}`, new Date().toISOString())
-        return true
-      }
-    } catch (err) {
-      console.error("Sync: Pull failed", err)
-    }
-    return false
-  }
+// Internal helper for pushChanges
+async function getFile(id: string) {
+    const { getFile: gf } = await import("./db");
+    return gf(id);
 }

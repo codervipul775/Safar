@@ -1,8 +1,7 @@
-import { useEffect, useRef } from "react"
 import DocEditor from "./DocEditor"
 import { FileType } from "../types"
 import type { LocalFile } from "../lib/db"
-import { Code, FileEdit, Sparkles, Pencil } from "lucide-react"
+import { Code, Sparkles, Pencil } from "lucide-react"
 import MonacoEditor, { loader } from "@monaco-editor/react"
 
 // Architecture Theme for Monaco

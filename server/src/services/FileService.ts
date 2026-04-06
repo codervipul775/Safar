@@ -44,8 +44,11 @@ export class FileService implements IFileService {
     })
     if (existing) throw new Error(`"${name}" already exists`)
 
+    const fileId = `f_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`
+    
     const file = await this.prisma.file.create({
       data: {
+        id: fileId, // MANDATORY ID LOCK
         name,
         type: data.type,
         workspaceId: data.workspaceId,

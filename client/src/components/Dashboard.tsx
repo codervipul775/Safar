@@ -1,5 +1,5 @@
 import { motion } from "framer-motion"
-import { Code, FileText, Sparkles, ChevronRight, GitBranch, Layers, LogOut, User, Zap, Globe, Cpu, MousePointer } from "lucide-react"
+import { Code, FileText, Sparkles, ChevronRight, Layers, LogOut, Cpu, Globe } from "lucide-react"
 
 interface DashboardProps {
   onSelectMode: (mode: 'CODE' | 'DOCS') => void

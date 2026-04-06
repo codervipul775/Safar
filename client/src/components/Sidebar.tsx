@@ -14,22 +14,16 @@ import {
   Layers,
   Settings,
   Search,
-  Cloud,
-  CloudOff,
   Trash2
 } from "lucide-react"
 import { FileType } from "../types"
-import type { FileTreeNode, Workspace } from "../types"
+import type { FileTreeNode } from "../types"
 
 interface SidebarProps {
-  workspaces: Workspace[]
-  activeWorkspace: Workspace | null
   fileTree: FileTreeNode[]
   activeFileId: string | null
   isOnline: boolean
-  pendingChanges: number
   sidebarOpen: boolean
-  onSelectWorkspace: (ws: Workspace) => void
   onCreateWorkspace: () => void
   onSelectFile: (id: string) => void
   onDeleteFile: (id: string) => void
@@ -65,14 +59,10 @@ const getIcon = (type: FileType, expanded?: boolean) => {
 }
 
 export default function Sidebar({
-  workspaces,
-  activeWorkspace,
   fileTree,
   activeFileId,
   isOnline,
-  pendingChanges,
   sidebarOpen,
-  onSelectWorkspace,
   onCreateWorkspace,
   onSelectFile,
   onDeleteFile,

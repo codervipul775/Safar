@@ -5,8 +5,7 @@
 // Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
 
 generator client {
-  provider = "prisma-client"
-  output   = "../src/generated/prisma"
+  provider = "prisma-client-js"
 }
 
 datasource db {
@@ -30,14 +29,16 @@ model Workspace {
   name        String
   description String?
 
-  ownerId String @db.ObjectId
-  owner   User   @relation(fields: [ownerId], references: [id])
+  ownerId    String
+  ownerEmail String? // Master Link for identity recovery across environments
+  owner      User    @relation(fields: [ownerId], references: [id])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   files     File[]
 
   @@index([ownerId])
+  @@index([ownerEmail])
 }
 
 model File {
@@ -48,11 +49,17 @@ model File {
   language String?
   parentId String?
 
+  ownerId    String?   // IDENTITY LOCK
+  ownerEmail String?   // IDENTITY LOCK
+
   workspaceId String
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   syncStatus String    @default("LOCAL_ONLY")
   syncedAt   DateTime?
+
+  @@index([ownerId])
+  @@index([ownerEmail])
 
   versions FileVersion[]
   syncLogs SyncLog[]

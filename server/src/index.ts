@@ -1,7 +1,7 @@
 import express from "express"
 import cors from "cors"
 import dotenv from "dotenv"
-import { PrismaClient } from "./generated/prisma/client"
+import { PrismaClient } from "@prisma/client"
 
 import { AuthService, WorkspaceService, FileService, SyncService } from "./services"
 import { createAuthRoutes, createWorkspaceRoutes, createFileRoutes, createSyncRoutes } from "./routes"
@@ -18,11 +18,21 @@ const PORT = process.env.PORT || 5000
 app.use(cors())
 app.use(express.json())
 
+// Root handler to confirm API is live
+app.get("/", (_req, res) => {
+  res.json({
+    message: "Safar API is Live 🚀",
+    status: "healthy",
+    documentation: "Refer to the Studio README for API usage",
+    timestamp: new Date().toISOString()
+  })
+})
+
 // services
-const authService = new AuthService(prisma)
-const workspaceService = new WorkspaceService(prisma)
-const fileService = new FileService(prisma)
-const syncService = new SyncService(prisma)
+const authService = new AuthService(prisma as any)
+const workspaceService = new WorkspaceService(prisma as any)
+const fileService = new FileService(prisma as any)
+const syncService = new SyncService(prisma as any)
 
 // routes
 app.use("/api/auth", createAuthRoutes(authService))

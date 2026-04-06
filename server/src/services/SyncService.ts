@@ -32,8 +32,8 @@ export interface SyncStatusInfo {
 }
 
 export interface ISyncService {
-  pushWorkspaces(userId: string, workspaces: SyncWorkspaceDTO[]): Promise<number>
-  pushChanges(userId: string, changes: SyncPushDTO[]): Promise<SyncResult>
+  pushWorkspaces(userId: string, userEmail: string, workspaces: SyncWorkspaceDTO[]): Promise<number>
+  pushChanges(userId: string, userEmail: string, changes: SyncPushDTO[]): Promise<SyncResult>
   pullChanges(workspaceId: string, since: Date): Promise<FileNode[]>
   resolveConflict(fileId: string, resolution: "local" | "cloud", localContent?: string): Promise<FileNode>
   getStatus(workspaceId: string): Promise<SyncStatusInfo>
@@ -42,19 +42,22 @@ export interface ISyncService {
 export class SyncService implements ISyncService {
   constructor(private prisma: PrismaClient) {}
 
-  async pushWorkspaces(userId: string, workspaces: SyncWorkspaceDTO[]): Promise<number> {
+  async pushWorkspaces(userId: string, userEmail: string, workspaces: SyncWorkspaceDTO[]): Promise<number> {
     let synced = 0
     for (const ws of workspaces) {
       await this.prisma.workspace.upsert({
         where: { id: ws.id },
         update: {
           name: ws.name,
+          ownerId: userId,
+          ownerEmail: userEmail, // SYNC IDENTITY LOCK
           updatedAt: new Date(ws.updatedAt)
         },
         create: {
           id: ws.id,
           name: ws.name,
           ownerId: userId,
+          ownerEmail: userEmail, // SYNC IDENTITY LOCK
           createdAt: new Date(ws.createdAt),
           updatedAt: new Date(ws.updatedAt)
         }
@@ -64,7 +67,7 @@ export class SyncService implements ISyncService {
     return synced
   }
 
-  async pushChanges(userId: string, changes: SyncPushDTO[]): Promise<SyncResult> {
+  async pushChanges(userId: string, userEmail: string, changes: SyncPushDTO[]): Promise<SyncResult> {
     let pushed = 0
     let conflicts = 0
 
@@ -108,11 +111,14 @@ export class SyncService implements ISyncService {
           }
         }
 
+        console.log(`Sync: Upserting file ${change.fileId} (${change.name}) for user ${userEmail}...`)
         await this.prisma.file.upsert({
           where: { id: change.fileId },
           update: {
             name: change.name,
             content: change.content,
+            ownerId: userId,        // IDENTITY LOCK
+            ownerEmail: userEmail,  // IDENTITY LOCK
             syncStatus: SyncStatus.SYNCED,
             syncedAt: new Date(),
             updatedAt: new Date(change.updatedAt)
@@ -124,6 +130,8 @@ export class SyncService implements ISyncService {
             content: change.content,
             parentId: change.parentId,
             workspaceId: change.workspaceId,
+            ownerId: userId,        // IDENTITY LOCK
+            ownerEmail: userEmail,  // IDENTITY LOCK
             syncStatus: SyncStatus.SYNCED,
             syncedAt: new Date(),
             createdAt: new Date(change.updatedAt),
@@ -155,6 +163,83 @@ export class SyncService implements ISyncService {
     })
 
     return files.map(FileNode.fromPrisma)
+  }
+
+  async pullFull(userId: string, userEmail?: string): Promise<{ workspaces: any[], files: any[] }> {
+    // Stage 1: Official Ownership Search
+    let workspaces = await this.prisma.workspace.findMany({
+      where: { ownerId: userId }
+    })
+
+    // Stage 2: Legacy Migration (Identity Recovery via Email)
+    if (workspaces.length === 0 && userEmail) {
+      console.log(`Sync: No files found for ID ${userId}, seeking legacy recovery by email: ${userEmail}...`)
+      workspaces = await this.prisma.workspace.findMany({
+          where: { ownerEmail: userEmail }
+      })
+      
+      // If found by email, update the ownerId to the current userId
+      if (workspaces.length > 0) {
+        console.log(`Sync: Reclaiming ${workspaces.length} legacy workspaces for user ${userId}.`)
+        for (const ws of workspaces) {
+            await this.prisma.workspace.update({
+                where: { id: ws.id },
+                data: { 
+                    ownerId: userId,
+                    ownerEmail: userEmail 
+                }
+            })
+        }
+      }
+    }
+
+    const workspaceIds = workspaces.map((w: any) => w.id)
+    let files = await this.prisma.file.findMany({
+      where: { 
+        workspaceId: { in: workspaceIds },
+        syncStatus: SyncStatus.SYNCED
+      }
+    })
+
+    // Stage 3: Direct file recovery — files exist but workspaces were never pushed
+    if (files.length === 0) {
+      console.log(`Sync: No files via workspaces. Trying direct ownerId lookup...`)
+      const directFiles = await this.prisma.file.findMany({
+        where: { 
+          OR: [
+            { ownerId: userId },
+            ...(userEmail ? [{ ownerEmail: userEmail }] : [])
+          ]
+        }
+      })
+
+      if (directFiles.length > 0) {
+        console.log(`Sync: Found ${directFiles.length} orphaned files. Auto-creating workspace records...`)
+        files = directFiles
+
+        // Auto-create missing workspace records so future pulls work normally
+        const missingWsIds = [...new Set(directFiles.map((f: any) => f.workspaceId))]
+        for (const wsId of missingWsIds) {
+          const exists = await this.prisma.workspace.findUnique({ where: { id: wsId } })
+          if (!exists) {
+            await this.prisma.workspace.create({
+              data: {
+                id: wsId,
+                name: "Recovered Studio",
+                ownerId: userId,
+                ownerEmail: userEmail || null,
+              }
+            })
+            workspaces.push({ id: wsId, name: "Recovered Studio", description: null, ownerId: userId, ownerEmail: userEmail || null, createdAt: new Date(), updatedAt: new Date() })
+          }
+        }
+      }
+    }
+
+    return {
+      workspaces,
+      files: files.map((f: any) => FileNode.fromPrisma(f).toJSON())
+    }
   }
 
   async resolveConflict(
@@ -238,6 +323,7 @@ export class SyncService implements ISyncService {
   ) {
     await this.prisma.syncLog.create({
       data: {
+        id: `log_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`, // IDENTITY LOCK
         fileId,
         action,
         status,

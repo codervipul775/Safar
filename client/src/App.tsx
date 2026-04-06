@@ -13,6 +13,7 @@ import {
   getAllWorkspaces,
   saveFile,
   saveWorkspace,
+  clearAllData,
 } from "./lib/db";
 import type { LocalFile, LocalWorkspace } from "./lib/db";
 import {
@@ -46,7 +47,7 @@ function buildTree(files: LocalFile[]): any[] {
 
 export default function App() {
   const [user, setUser] = useState<any>(null);
-  const [workspaces, setWorkspaces] = useState<LocalWorkspace[]>([]);
+  const [, setWorkspaces] = useState<LocalWorkspace[]>([]);
   const [activeWs, setActiveWs] = useState<LocalWorkspace | null>(null);
   const [files, setFiles] = useState<LocalFile[]>([]);
   const [tree, setTree] = useState<any[]>([]);
@@ -101,10 +102,43 @@ export default function App() {
     window.addEventListener("offline", handleOffline)
 
     ;(async () => {
-      const data = await getAllWorkspaces(user?.id);
+      const stored = localStorage.getItem("safar_user")
+      const currentUser = stored ? JSON.parse(stored) : null;
+      
+      // 1. PERFORM RECOVERY FIRST
+      if (currentUser) {
+        console.log("Sync: Checking for cloud data...");
+        await SyncService.pullChanges();
+      }
+      
+      // 2. READ RESULTS FROM DATABASE
+      const data = await getAllWorkspaces();
+      
+      // 3. AUTO-BOOTSTRAP ONLY IF TRULY EMPTY
+      if (currentUser && data.length === 0) {
+          console.log("Bootstrap: No data found in cloud or local. Building Initial Studio...");
+          const ws: LocalWorkspace = {
+              id: crypto.randomUUID(),
+              name: "Initial Studio",
+              ownerId: currentUser.id,
+              ownerEmail: currentUser.email,
+              syncStatus: SyncStatus.LOCAL_ONLY, // Will be pushed on next sync cycle
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+          };
+          await saveWorkspace(ws);
+          data.push(ws);
+      }
+
       setWorkspaces(data);
       if (data.length > 0 && !activeWs) {
-        setActiveWs(data[0]);
+        // Find most recently used workspace or first one
+        const sorted = data.sort((a,b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+        setActiveWs(sorted[0]);
+        // Also pull files for this workspace specifically to be sure
+        const wsFiles = await getFilesByWorkspace(sorted[0].id);
+        setFiles(wsFiles);
+        setTree(buildTree(wsFiles));
       }
     })();
 
@@ -235,9 +269,10 @@ export default function App() {
     else if (document.exitFullscreen) document.exitFullscreen();
   };
 
-  const onLogout = () => {
+  const onLogout = async () => {
     localStorage.removeItem("safar_token");
     localStorage.removeItem("safar_user");
+    await clearAllData(); // Wipe IndexedDB to prevent cross-account data leaks
     setUser(null);
     setActiveWs(null);
     setFiles([]);
@@ -265,14 +300,26 @@ export default function App() {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
-    await saveWorkspace(ws);
-    setWorkspaces([...workspaces, ws]);
+    saveWorkspace(ws).then(() => SyncService.pushChanges()); // Background sync
+    setWorkspaces(prev => [...prev, ws]);
     setActiveWs(ws);
     setShowWsModal(false);
   };
 
   const createFile = async (name: string) => {
-    if (!activeWs) return;
+    let wsId = activeWs?.id;
+
+    // FAIL-SAFE: If no workspace is active, create one instantly or find the first available
+    if (!wsId) {
+        console.warn("Creation: No active workspace found. Re-checking database...");
+        const wsList = await getAllWorkspaces();
+        if (wsList.length === 0) {
+            alert("Please create a workspace first using the '+' button in the sidebar top header.");
+            return;
+        }
+        wsId = wsList[0].id;
+        setActiveWs(wsList[0]);
+    }
 
     // DUPLICATE GUARD
     const isDuplicate = files.some(f => f.name.toLowerCase() === name.toLowerCase() && f.parentId === parentId);
@@ -288,7 +335,7 @@ export default function App() {
 
     const f: LocalFile = {
       id: crypto.randomUUID(),
-      workspaceId: activeWs.id,
+      workspaceId: wsId!,
       parentId,
       name,
       type: isFolder ? FileType.FOLDER : type,
@@ -300,24 +347,64 @@ export default function App() {
       syncedAt: null
     };
     await saveFile(f);
+    // SYNC LOCK: Wait for push to confirm persistence in Atlas
+    await SyncService.pushChanges();
+    
+    // ATOMIC UI UPDATE: Direct forest generation
+    setFiles(prev => {
+        const next = [...prev, f];
+        setTree(buildTree(next));
+        return next;
+    });
+    
     setShowFileModal(false);
-    refreshFiles();
     if (!isFolder) openFile(f.id);
   };
 
   const handleAuthSuccess = async (u: any) => {
     setUser(u);
     setShowAuth(false);
-    const wsList = await getAllWorkspaces()
+    
+    // 1. RE-ATTRIBUTION: Claim all local work for this production identity
+    console.log("Sync: Re-attributing local files to production account...");
+    const wsList = await getAllWorkspaces();
     for (const ws of wsList) {
-      if (ws.syncStatus === SyncStatus.LOCAL_ONLY) await saveWorkspace({ ...ws, syncStatus: SyncStatus.PENDING })
-      const fileList = await getFilesByWorkspace(ws.id)
+      await saveWorkspace({ 
+          ...ws, 
+          ownerId: u.id, 
+          ownerEmail: u.email,
+          syncStatus: SyncStatus.PENDING
+      });
+      
+      const fileList = await getFilesByWorkspace(ws.id);
       for (const f of fileList) {
-        if (f.syncStatus === SyncStatus.LOCAL_ONLY) await saveFile({ ...f, syncStatus: SyncStatus.PENDING })
+        await saveFile({ 
+            ...f, 
+            ownerId: u.id, 
+            ownerEmail: u.email,
+            syncStatus: SyncStatus.PENDING
+        });
       }
     }
-    refreshFiles();
+
+    // 2. CLOUD RECOVERY: Pull existing files from account
+    await SyncService.pullChanges();
+    
+    // 3. LOAD RECOVERED DATA: Read what was pulled and set active workspace
+    const recovered = await getAllWorkspaces();
+    setWorkspaces(recovered);
+    
+    if (recovered.length > 0) {
+      const sorted = recovered.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+      setActiveWs(sorted[0]);
+      const wsFiles = await getFilesByWorkspace(sorted[0].id);
+      setFiles(wsFiles);
+      setTree(buildTree(wsFiles));
+    }
+    
+    // 4. Push any re-attributed local work
     SyncService.pushChanges();
+    
     if (pendingMode) { setViewMode(pendingMode); setPendingMode(null); }
   };
 
@@ -341,14 +428,10 @@ export default function App() {
       ) : (
         <div className={`app-layout ${viewMode.toLowerCase()}-mode`}>
             <Sidebar
-              workspaces={workspaces as any}
-              activeWorkspace={activeWs as any}
               fileTree={tree}
               activeFileId={activeFile?.id || null}
               isOnline={isOnline}
-              pendingChanges={files.filter(f => f.syncStatus === SyncStatus.PENDING).length}
               sidebarOpen={sidebarOpen}
-              onSelectWorkspace={(ws) => setActiveWs(ws as LocalWorkspace)}
               onCreateWorkspace={() => setShowWsModal(true)}
               onSelectFile={openFile}
               onDeleteFile={onDeleteFile}
