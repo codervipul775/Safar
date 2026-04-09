@@ -10,7 +10,8 @@ import {
   Sun,
   FileText,
   FileCode,
-  X
+  X,
+  Sparkles
 } from "lucide-react"
 import type { OpenTab } from "../types"
 import { FileType } from "../types"
@@ -19,7 +20,7 @@ interface TopbarProps {
   tabs: OpenTab[]
   activeTabId: string | null
   user: any
-  saveStatus: "synced" | "saving" | "local" | "cloud"
+  saveStatus: "synced" | "saving" | "local" | "syncing" | "offline" | "error"
   theme: 'light' | 'dark'
   onToggleTheme: () => void
   onSelectTab: (id: string) => void
@@ -32,6 +33,8 @@ interface TopbarProps {
   onShowVersions: () => void
   onGoHome: () => void
   onRunCode: () => void
+  onToggleChat: () => void
+  showChat: boolean
   viewMode: 'CODE' | 'DOCS' | 'DASHBOARD'
 }
 
@@ -51,6 +54,8 @@ export default function Topbar({
   onShowVersions,
   onGoHome,
   onRunCode,
+  onToggleChat,
+  showChat,
   viewMode
 }: TopbarProps) {
   return (
@@ -84,9 +89,9 @@ export default function Topbar({
       </div>
 
       <div className="topbar-right">
-        <div className="sync-status-minimal">
-            <div className={`sync-dot-architectural ${saveStatus === 'synced' ? 'bg-success' : 'bg-warning'}`} />
-            <span>{saveStatus.toUpperCase()}</span>
+        <div className="sync-status-minimal" title={`Sync status: ${saveStatus}`}>
+            <div className={`sync-dot-architectural dot-${saveStatus}`} />
+            <span>{saveStatus === 'offline' ? 'OFFLINE' : saveStatus.toUpperCase()}</span>
         </div>
 
         <div className="action-group-minimal">
@@ -110,6 +115,15 @@ export default function Topbar({
              </button>
           )}
 
+          <button 
+            className={`btn-ai-minimal ${showChat ? 'active' : ''}`} 
+            onClick={onToggleChat}
+            title="Safar AI"
+          >
+            <Sparkles size={14} />
+            <span>AI</span>
+          </button>
+
           <div className="user-section-minimal">
             <div className="avatar-minimal" title={user?.name || "User"}>
               {user?.email?.[0].toUpperCase() || "V"}
@@ -130,10 +144,18 @@ export default function Topbar({
         .tab-close-minimal { background: transparent; border: none; font-size: 14px; opacity: 0.4; cursor: pointer; display: flex; align-items: center; margin-left: 8px; }
         .tab-close-minimal:hover { opacity: 1; color: var(--error); }
 
-        .sync-status-minimal { display: flex; align-items: center; gap: 8px; font-size: 0.6rem; font-weight: 800; color: var(--text-muted); padding-right: 16px; border-right: var(--border-thin); }
-        .sync-dot-architectural { width: 6px; height: 6px; border-radius: 50%; }
-        .bg-success { background: var(--success); }
-        .bg-warning { background: var(--warning); }
+        .sync-status-minimal { display: flex; align-items: center; gap: 8px; font-size: 0.6rem; font-weight: 800; color: var(--text-muted); padding-right: 16px; border-right: var(--border-thin); transition: color 0.25s ease; }
+        .sync-dot-architectural { width: 6px; height: 6px; border-radius: 50%; transition: background 0.25s ease; }
+        .dot-synced { background: var(--success); }
+        .dot-saving, .dot-syncing { background: var(--warning); animation: pulse-status 1s infinite alternate; }
+        .dot-local { background: var(--info); }
+        .dot-offline { background: #94a3b8; }
+        .dot-error { background: var(--error); }
+        
+        @keyframes pulse-status {
+          from { opacity: 0.4; transform: scale(0.8); }
+          to { opacity: 1; transform: scale(1.1); }
+        }
 
         .action-group-minimal { display: flex; align-items: center; gap: 4px; padding-left: 12px; }
         .user-section-minimal { display: flex; align-items: center; gap: 16px; padding-left: 16px; border-left: var(--border-medium); }
@@ -156,6 +178,25 @@ export default function Topbar({
             letter-spacing: 0.05em;
             cursor: pointer;
         }
+        .btn-ai-minimal {
+            background: transparent;
+            color: var(--text-muted);
+            border: var(--border-thin);
+            height: 32px;
+            padding: 0 12px;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            font-weight: 800;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+        .btn-ai-minimal:hover { color: var(--text-primary); background: var(--bg-hover); }
+        .btn-ai-minimal.active { color: var(--text-primary); background: var(--bg-active); border-color: var(--accent-primary); }
       `}</style>
     </header>
   )

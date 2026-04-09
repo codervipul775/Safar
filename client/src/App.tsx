@@ -5,6 +5,7 @@ import Editor from "./components/Editor";
 import Auth from "./components/Auth";
 import VersionModal from "./components/VersionModal";
 import Runner from "./components/Runner";
+import ChatPanel from "./components/ChatPanel";
 import { CreateFileModal, CreateWorkspaceModal } from "./components/Modal";
 import Dashboard from "./components/Dashboard";
 
@@ -62,12 +63,13 @@ export default function App() {
   const [showRunner, setShowRunner] = useState(false);
   const [runnerKey, setRunnerKey] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [showChat, setShowChat] = useState(false);
 
   const [isFolder, setIsFolder] = useState(false);
   const [parentId, setParentId] = useState<string | null>(null);
   const [pendingType, setPendingType] = useState<FileType | null>(null);
 
-  const [saveStatus, setSaveStatus] = useState<"synced" | "saving" | "local" | "cloud">("cloud");
+  const [saveStatus, setSaveStatus] = useState<"synced" | "saving" | "local" | "syncing" | "offline" | "error">("synced");
   const [viewMode, setViewMode] = useState<'DASHBOARD' | 'CODE' | 'DOCS'>('DASHBOARD');
   const [pendingMode, setPendingMode] = useState<'CODE' | 'DOCS' | null>(null);
 
@@ -151,11 +153,29 @@ export default function App() {
   // ===== SYNC INTERVAL =====
   useEffect(() => {
     if (!isOnline || !user) return;
-    const interval = setInterval(() => {
-      SyncService.pushChanges();
+    const interval = setInterval(async () => {
+      const syncedCount = await SyncService.pushChanges();
+      if (syncedCount > 0 && (saveStatus === 'offline' || saveStatus === 'local' || saveStatus === 'syncing')) {
+        setSaveStatus("synced");
+      }
     }, 5000);
     return () => clearInterval(interval);
-  }, [isOnline, user, activeWs]);
+  }, [isOnline, user, activeWs, saveStatus]);
+
+  // ===== RECONNECTION SYNC =====
+  useEffect(() => {
+    if (isOnline && (saveStatus === 'offline' || saveStatus === 'error')) {
+      (async () => {
+        setSaveStatus("syncing");
+        try {
+          await SyncService.pushChanges(true);
+          setSaveStatus("synced");
+        } catch {
+          setSaveStatus("error");
+        }
+      })();
+    }
+  }, [isOnline]);
 
   const refreshFiles = useCallback(async () => {
     if (!activeWs) return;
@@ -240,7 +260,20 @@ export default function App() {
         }
       }
       pendingRef.current.clear();
-      setSaveStatus(user ? "synced" : "local");
+      
+      if (!user) {
+        setSaveStatus("local");
+      } else if (!navigator.onLine) {
+        setSaveStatus("offline");
+      } else {
+        setSaveStatus("syncing");
+        try {
+          await SyncService.pushChanges(true);
+          setSaveStatus("synced");
+        } catch (e) {
+          setSaveStatus("error");
+        }
+      }
       setTabs(prev => prev.map(t => t.id === id ? { ...t, isModified: false } : t));
       
       if (activeWs) {
@@ -409,11 +442,12 @@ export default function App() {
   };
 
   const handleSelectMode = (mode: 'CODE' | 'DOCS') => {
-    setViewMode(mode);
     if (!user) { 
-        console.warn("Safar Studio: Entering as Guest. Cloud sync disabled.");
-        setPendingMode(mode); 
+        setPendingMode(mode);
+        setShowAuth(true);
+        return;
     }
+    setViewMode(mode);
   };
 
   return (
@@ -480,6 +514,8 @@ export default function App() {
                 setShowRunner(true)
               }}
               viewMode={viewMode}
+              onToggleChat={() => setShowChat(s => !s)}
+              showChat={showChat}
             />
 
             <div className="app-content">
@@ -500,6 +536,18 @@ export default function App() {
                   onClose={() => setShowRunner(false)} 
                 />
               )}
+
+              <ChatPanel
+                isOpen={showChat}
+                onClose={() => setShowChat(false)}
+                activeFile={activeFile as any}
+                theme={theme}
+                onApplyCode={(code) => {
+                  if (activeFile) {
+                    onChange(activeFile.id, code);
+                  }
+                }}
+              />
             </div>
           </div>
         </div>

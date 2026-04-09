@@ -113,17 +113,19 @@ export class SyncService {
       if (allChanges.length > 0) {
         console.log(`Sync: Found ${allChanges.length} local changes to push:`, allChanges)
         const res = await api.post("/sync/push", { changes: allChanges })
-        const results = res.data.results
+        const results = res.data.results || []
 
         for (const r of results) {
-           const f = await getFile(r.fileId)
-           if (f) {
-             await saveFile({
-               ...f,
-               syncStatus: SyncStatus.SYNCED,
-               syncedAt: new Date().toISOString()
-             })
-             syncedCount++
+           if (r.status === 'SUCCESS' || r.status === 'CONFLICT') {
+             const f = await getFile(r.fileId)
+             if (f) {
+               await saveFile({
+                 ...f,
+                 syncStatus: r.status === 'CONFLICT' ? SyncStatus.CONFLICT : SyncStatus.SYNCED,
+                 syncedAt: new Date().toISOString()
+               })
+               syncedCount++
+             }
            }
         }
       }

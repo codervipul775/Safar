@@ -23,6 +23,7 @@ export interface SyncResult {
   pushed: number
   pulled: number
   conflicts: number
+  results: { fileId: string; status: 'SUCCESS' | 'FAILED' | 'CONFLICT' }[]
 }
 
 export interface SyncStatusInfo {
@@ -70,6 +71,7 @@ export class SyncService implements ISyncService {
   async pushChanges(userId: string, userEmail: string, changes: SyncPushDTO[]): Promise<SyncResult> {
     let pushed = 0
     let conflicts = 0
+    const results: { fileId: string; status: 'SUCCESS' | 'FAILED' | 'CONFLICT' }[] = []
 
     for (const change of changes) {
       try {
@@ -89,6 +91,7 @@ export class SyncService implements ISyncService {
 
             await this.createLog(change.fileId, SyncAction.UPDATE, SyncLogStatus.FAILED, "Conflict detected")
             conflicts++
+            results.push({ fileId: change.fileId, status: 'CONFLICT' })
             continue
           }
 
@@ -141,14 +144,16 @@ export class SyncService implements ISyncService {
 
         await this.createLog(change.fileId, SyncAction.UPDATE, SyncLogStatus.SUCCESS)
         pushed++
+        results.push({ fileId: change.fileId, status: 'SUCCESS' })
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Unknown error"
         await this.createLog(change.fileId, SyncAction.UPDATE, SyncLogStatus.FAILED, msg)
         console.error(`Sync error for ${change.fileId}:`, err)
+        results.push({ fileId: change.fileId, status: 'FAILED' })
       }
     }
 
-    return { pushed, pulled: 0, conflicts }
+    return { pushed, pulled: 0, conflicts, results }
   }
 
 
