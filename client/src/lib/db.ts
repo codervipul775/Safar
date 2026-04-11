@@ -117,7 +117,9 @@ export const generateId = () => crypto.randomUUID()
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function put(store: any, value: any) {
   const db = await getDB()
-  return db.put(store, value)
+  const tx = db.transaction(store, 'readwrite')
+  await tx.store.put(value)
+  await tx.done
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -25,6 +25,7 @@ import {
 } from "./types";
 import type { OpenTab } from "./types";
 import { SyncService } from "./lib/syncService";
+import { smartApply } from "./lib/patchUtils";
 
 function buildTree(files: LocalFile[]): any[] {
   const map = new Map<string | null, any[]>();
@@ -542,9 +543,17 @@ export default function App() {
                 onClose={() => setShowChat(false)}
                 activeFile={activeFile as any}
                 theme={theme}
-                onApplyCode={(code) => {
+                onApplyCode={(generatedCode) => {
                   if (activeFile) {
-                    onChange(activeFile.id, code);
+                    const currentContent = liveValueRef.current.get(activeFile.id) || activeFile.content || "";
+                    const result = smartApply(currentContent, generatedCode);
+                    
+                    if (result === null) {
+                      alert("Could not apply this patch automatically. The file structure might have changed. Please try copying the code manually.");
+                      return;
+                    }
+
+                    onChange(activeFile.id, result);
                   }
                 }}
               />
