@@ -5,7 +5,7 @@
 ```mermaid
 erDiagram
     USER {
-        ObjectId *id PK
+        ObjectId id PK
         String email UK "unique"
         String name
         String passwordHash
@@ -14,47 +14,51 @@ erDiagram
     }
 
     WORKSPACE {
-        ObjectId *id PK
+        String id PK
         String name
-        ObjectId ownerId FK
+        String description "nullable"
+        String ownerId FK
+        String ownerEmail "nullable, identity recovery"
         DateTime createdAt
         DateTime updatedAt
     }
 
     FILE {
-        ObjectId *id PK
+        String id PK
         String name
-        String type
+        String type "TEXT, MARKDOWN, CODE, TODO, FOLDER, DOCUMENT"
         String content "nullable"
         String language "nullable"
-        ObjectId parentId FK
-        ObjectId workspaceId FK
-        String syncStatus
+        String parentId FK "nullable, self-referencing"
+        String workspaceId FK
+        String ownerId "nullable, identity lock"
+        String ownerEmail "nullable, identity lock"
+        String syncStatus "SYNCED, PENDING, CONFLICT, LOCAL_ONLY, FAILED"
         DateTime syncedAt "nullable"
         DateTime createdAt
         DateTime updatedAt
     }
 
     FILE_VERSION {
-        ObjectId *id PK
-        ObjectId fileId FK
+        String id PK
+        String fileId FK
         String content
         Int versionNumber
         DateTime createdAt
     }
 
     SYNC_LOG {
-        ObjectId *id PK
-        ObjectId fileId FK
-        String action
-        String status
-        String details
+        String id PK
+        String fileId FK
+        String action "CREATE, UPDATE, DELETE, RESOLVE_CONFLICT"
+        String status "SUCCESS, FAILED, PARTIAL"
+        String details "nullable"
         DateTime timestamp
     }
 
-    USER ||--o{ WORKSPACE : ""
-    WORKSPACE ||--o{ FILE : ""
-    FILE ||--o{ FILE_VERSION : ""
-    FILE ||--o{ SYNC_LOG : ""
-
+    USER ||--o{ WORKSPACE : "owns"
+    WORKSPACE ||--o{ FILE : "contains"
+    FILE ||--o{ FILE : "parent-child"
+    FILE ||--o{ FILE_VERSION : "has versions"
+    FILE ||--o{ SYNC_LOG : "has logs"
 ```

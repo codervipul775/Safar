@@ -8,16 +8,17 @@ classDiagram
     direction TB
 
     class FileType {
-       
+        <<enumeration>>
         TEXT
         MARKDOWN
         CODE
         TODO
         FOLDER
+        DOCUMENT
     }
 
     class SyncStatus {
-        
+        <<enumeration>>
         SYNCED
         PENDING
         CONFLICT
@@ -26,11 +27,18 @@ classDiagram
     }
 
     class SyncAction {
-        
+        <<enumeration>>
         CREATE
         UPDATE
         DELETE
         RESOLVE_CONFLICT
+    }
+
+    class SyncLogStatus {
+        <<enumeration>>
+        SUCCESS
+        FAILED
+        PARTIAL
     }
 
     %% ===== INTERFACES =====
@@ -47,11 +55,11 @@ classDiagram
 
     class ISyncService {
         <<interface>>
-        +queueChange(fileId: string, action: SyncAction) Promise~void~
-        +pushChanges() Promise~SyncResult~
-        +pullChanges(since: Date) Promise~FileNode[]~
-        +resolveConflict(fileId: string, resolution: string) Promise~void~
-        +getStatus() SyncStatusInfo
+        +pushWorkspaces(userId: string, userEmail: string, workspaces: SyncWorkspaceDTO[]) Promise~number~
+        +pushChanges(userId: string, userEmail: string, changes: SyncPushDTO[]) Promise~SyncResult~
+        +pullChanges(workspaceId: string, since: Date) Promise~FileNode[]~
+        +resolveConflict(fileId: string, resolution: string, localContent: string) Promise~FileNode~
+        +getStatus(workspaceId: string) Promise~SyncStatusInfo~
     }
 
     class IWorkspaceService {
@@ -79,6 +87,7 @@ classDiagram
         +getUpdatedAt() Date
         +toJSON() object
         #validate() void*
+        #touch() void
     }
 
     %% ===== MODEL CLASSES =====
@@ -86,26 +95,22 @@ classDiagram
         -email: string
         -name: string
         -passwordHash: string
-        -workspaces: Workspace[]
         +getEmail() string
         +getName() string
-        +getWorkspaces() Workspace[]
-        +createWorkspace(name: string) Workspace
         +toJSON() object
+        +isValidEmail(email: string)$ boolean
+        +fromPrisma(data: object)$ User
         #validate() void
     }
 
     class Workspace {
         -name: string
         -ownerId: string
-        -files: FileNode[]
+        -description: string
         +getName() string
         +getOwnerId() string
-        +getFiles() FileNode[]
-        +getFileTree() FileNode[]
-        +addFile(file: FileNode) void
-        +removeFile(fileId: string) void
         +toJSON() object
+        +fromPrisma(data: object)$ Workspace
         #validate() void
     }
 
@@ -118,20 +123,18 @@ classDiagram
         -workspaceId: string
         -syncStatus: SyncStatus
         -syncedAt: Date
-        -versions: FileVersion[]
         -children: FileNode[]
         +getName() string
         +getType() FileType
         +getContent() string
-        +getLanguage() string
-        +getSyncStatus() SyncStatus
-        +getChildren() FileNode[]
         +isFolder() boolean
         +updateContent(content: string) void
         +setSyncStatus(status: SyncStatus) void
-        +createVersion() FileVersion
-        +getVersionHistory() FileVersion[]
         +addChild(node: FileNode) void
+        +removeChild(childId: string) void
+        +getDescendantCount() number
+        +getExtension() string
+        +fromPrisma(data: object)$ FileNode
         +toJSON() object
         #validate() void
     }
@@ -150,11 +153,11 @@ classDiagram
     class SyncLog {
         -fileId: string
         -action: SyncAction
-        -status: string
+        -status: SyncLogStatus
         -details: string
         +getFileId() string
         +getAction() SyncAction
-        +getStatus() string
+        +getStatus() SyncLogStatus
         +markSuccess() void
         +markFailed(error: string) void
         +toJSON() object
@@ -177,14 +180,12 @@ classDiagram
 
     class SyncService {
         -prisma: PrismaClient
-        -fileService: FileService
-        +queueChange(fileId: string, action: SyncAction) Promise~void~
-        +pushChanges() Promise~SyncResult~
-        +pullChanges(since: Date) Promise~FileNode[]~
-        +resolveConflict(fileId: string, resolution: string) Promise~void~
-        +getStatus() SyncStatusInfo
-        -detectConflicts(local: FileNode, cloud: FileNode) boolean
-        -createSyncLog(fileId: string, action: SyncAction) Promise~void~
+        +pushWorkspaces(userId: string, userEmail: string, workspaces: SyncWorkspaceDTO[]) Promise~number~
+        +pushChanges(userId: string, userEmail: string, changes: SyncPushDTO[]) Promise~SyncResult~
+        +pullChanges(workspaceId: string, since: Date) Promise~FileNode[]~
+        +resolveConflict(fileId: string, resolution: string, localContent: string) Promise~FileNode~
+        +getStatus(workspaceId: string) Promise~SyncStatusInfo~
+        -createLog(fileId: string, action: SyncAction, status: SyncLogStatus, details: string) Promise~void~
     }
 
     class WorkspaceService {
@@ -198,11 +199,10 @@ classDiagram
     class AuthService {
         -prisma: PrismaClient
         -jwtSecret: string
+        -saltRounds: number
         +register(data: RegisterDTO) Promise~AuthResult~
         +login(data: LoginDTO) Promise~AuthResult~
         +verifyToken(token: string) Promise~User~
-        -hashPassword(password: string) Promise~string~
-        -comparePassword(password: string, hash: string) Promise~boolean~
         -generateToken(userId: string) string
     }
 
@@ -221,6 +221,7 @@ classDiagram
     class SyncController {
         -syncService: SyncService
         +pushChanges(req: Request, res: Response) void
+        +pushWorkspaces(req: Request, res: Response) void
         +pullChanges(req: Request, res: Response) void
         +getStatus(req: Request, res: Response) void
         +resolveConflict(req: Request, res: Response) void
@@ -245,28 +246,30 @@ classDiagram
         -dbName: string
         -version: number
         -db: IDBDatabase
-        +init() Promise~void~
-        +getAll(store: string) Promise~any[]~
-        +getById(store: string, id: string) Promise~any~
-        +put(store: string, data: any) Promise~void~
-        +delete(store: string, id: string) Promise~void~
-        +query(store: string, index: string, value: any) Promise~any[]~
+        +getDB() Promise~IDBDatabase~
+        +getAllWorkspaces() Promise~LocalWorkspace[]~
+        +saveWorkspace(ws: LocalWorkspace) Promise~void~
+        +getFilesByWorkspace(wsId: string) Promise~LocalFile[]~
+        +getFile(id: string) Promise~LocalFile~
+        +saveFile(file: LocalFile) Promise~void~
+        +deleteFile(id: string) Promise~void~
+        +deleteFileRecursive(id: string) Promise~void~
+        +getFileVersions(fileId: string) Promise~LocalFileVersion[]~
+        +saveFileVersion(v: LocalFileVersion) Promise~void~
+        +clearAllData() Promise~void~
     }
 
-    class ClientSyncEngine {
-        -localDb: LocalDatabase
-        -apiBaseUrl: string
-        -isOnline: boolean
-        -syncInterval: number
-        +init() void
-        +onOnline() void
-        +onOffline() void
-        +pushPendingChanges() Promise~void~
-        +pullCloudChanges() Promise~void~
-        +getPendingCount() Promise~number~
-        +getLastSyncTime() Date
-        -startListening() void
-        -scheduleSyncCheck() void
+    class ClientSyncService {
+        -isSyncing: boolean
+        +pushChanges(force: boolean) Promise~number~
+        -getFile(id: string) Promise~LocalFile~
+    }
+
+    class PatchUtils {
+        +isUnifiedDiff(content: string) boolean
+        +hasSearchReplaceBlocks(content: string) boolean
+        +applySearchReplace(current: string, new_val: string) string
+        +smartApply(current: string, new_val: string) string
     }
 
     %% ===== INHERITANCE =====
@@ -291,12 +294,13 @@ classDiagram
     FileNode --> FileType 
     FileNode --> SyncStatus 
     SyncLog --> SyncAction 
+    SyncLog --> SyncLogStatus
 
     %% ===== DEPENDENCIES =====
     FileController --> FileService
     SyncController --> SyncService 
     WorkspaceController --> WorkspaceService 
     AuthController --> AuthService 
-    SyncService --> FileService 
-    ClientSyncEngine --> LocalDatabase 
+    ClientSyncService --> LocalDatabase 
+    PatchUtils --> ClientSyncService
 ```
