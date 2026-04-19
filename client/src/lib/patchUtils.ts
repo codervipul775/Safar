@@ -88,7 +88,7 @@ export function smartApply(currentContent: string, newContent: string): string |
       try {
         const jsResult = applyPatch(currentContent, patchBlock, {
           fuzzFactor: 3,
-          compareLine(lineNumber, line, operation, patchContent) {
+          compareLine(_lineNumber, line, _operation, patchContent) {
             return normalize(line) === normalize(patchContent);
           }
         });
